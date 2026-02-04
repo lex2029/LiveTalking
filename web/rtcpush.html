@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WebRTC webcam</title>
+    <title>WebRTC</title>
     <style>
     button {
         padding: 8px 16px;
@@ -26,26 +26,26 @@
 
 <div class="option">
     <input id="use-stun" type="checkbox"/>
-    <label for="use-stun">Use STUN server</label>
+    <label for="use-stun">Использовать STUN-сервер</label>
 </div>
-<button class="btn btn-primary" id="btn_play">Start</button>
+<button class="btn btn-primary" id="btn_play">Подключиться</button>
 <form class="form-inline" id="echo-form">
     <div class="form-group">
-      <p>input text</p>
+      <p>Введите текст</p>
 
-      <textarea cols="2" rows="3" style="width:600px;height:50px;" class="form-control" id="message">test</textarea>
+      <textarea cols="2" rows="3" style="width:600px;height:50px;" class="form-control" id="message">тест</textarea>
     </div>
-    <button type="submit" class="btn btn-default">Send</button>
+    <button type="submit" class="btn btn-default">Отправить</button>
   </form>
 
 <div id="media">
-    <h2>Media</h2>
+    <h2>Медиа</h2>
 
     <video id="rtc_media_player" style="width:600px;" controls autoplay></video>
 </div>
 
 <script src="srs.sdk.js"></script>
-<script type="text/javascript" src="http://cdn.sockjs.org/sockjs-0.3.4.js"></script>
+<script type="text/javascript" src="https://cdn.sockjs.org/sockjs-0.3.4.js"></script>
 <script type="text/javascript" src="https://code.jquery.com/jquery-2.1.1.min.js"></script>
 </body>
 <script type="text/javascript" charset="utf-8">
@@ -72,7 +72,7 @@
 	  $('#echo-form').on('submit', function(e) {
 		e.preventDefault();
 		var message = $('#message').val();
-		console.log('Sending: ' + message);
+		console.log('Отправитьing: ' + message);
 		ws.send(message);
 		$('#message').val('');
 	  });

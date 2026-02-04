@@ -31,7 +31,9 @@ class NerfASR(BaseASR):
         super().__init__(opt,parent)
 
         self.device = "cuda" if torch.cuda.is_available() else ("mps" if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()) else "cpu")
-        if 'esperanto' in self.opt.asr_model:
+        if getattr(self.opt, 'asr_dim', 0) > 0:
+            self.audio_dim = self.opt.asr_dim
+        elif 'esperanto' in self.opt.asr_model:
             self.audio_dim = 44
         elif 'deepspeech' in self.opt.asr_model:
             self.audio_dim = 29
@@ -196,7 +198,14 @@ class NerfASR(BaseASR):
             if 'hubert' in self.opt.asr_model:
                 logits = result.last_hidden_state # [B=1, T=pts//320, hid=1024]
             else:
-                logits = result.logits # [1, N - 1, 32]
+                logits = result.logits # [1, N - 1, C]
+
+        # align logits dim to expected audio_dim
+        if logits.shape[-1] != self.audio_dim:
+            if logits.shape[-1] > self.audio_dim:
+                logits = logits[..., :self.audio_dim]
+            else:
+                logits = F.pad(logits, (0, self.audio_dim - logits.shape[-1]))
         #print('logits.shape:',logits.shape)
         
         # cut off stride

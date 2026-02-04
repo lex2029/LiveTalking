@@ -100,7 +100,9 @@ class NeRFNetwork(NeRFRenderer):
         # audio embedding
         self.emb = self.opt.emb
 
-        if 'esperanto' in self.opt.asr_model:
+        if getattr(self.opt, 'asr_dim', 0) > 0:
+            self.audio_in_dim = self.opt.asr_dim
+        elif 'esperanto' in self.opt.asr_model:
             self.audio_in_dim = 44
         elif 'deepspeech' in self.opt.asr_model:
             self.audio_in_dim = 29
@@ -233,6 +235,10 @@ class NeRFNetwork(NeRFRenderer):
 
         if self.att > 0:
             enc_a = self.audio_att_net(enc_a.unsqueeze(0)) # [1, 64]
+
+        amp = getattr(self.opt, 'audio_amp', 1.0)
+        if amp is not None and amp != 1.0:
+            enc_a = enc_a * float(amp)
             
         return enc_a
 

@@ -1,5 +1,32 @@
 var pc = null;
 
+function getQualityPreference() {
+    if (typeof window.getQualityPreference === 'function') {
+        return window.getQualityPreference();
+    }
+    return 'balanced';
+}
+
+function getPlayoutDelaySeconds() {
+    if (typeof window.getPlayoutDelaySeconds === 'function') {
+        return window.getPlayoutDelaySeconds();
+    }
+    return 0;
+}
+
+async function fetchIceServers() {
+    try {
+        const response = await fetch('/ice');
+        const data = await response.json();
+        if (data && Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+            return data.iceServers;
+        }
+    } catch (e) {
+        console.log('Failed to fetch ICE servers:', e);
+    }
+    return [];
+}
+
 function negotiate() {
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('audio', { direction: 'recvonly' });
@@ -22,10 +49,12 @@ function negotiate() {
         });
     }).then(() => {
         var offer = pc.localDescription;
+        var quality = getQualityPreference();
         return fetch('/offer', {
             body: JSON.stringify({
                 sdp: offer.sdp,
                 type: offer.type,
+                quality: quality,
             }),
             headers: {
                 'Content-Type': 'application/json'
@@ -36,18 +65,25 @@ function negotiate() {
         return response.json();
     }).then((answer) => {
         document.getElementById('sessionid').value = answer.sessionid
+        if (typeof window.onSessionReady === 'function') {
+            window.onSessionReady(answer.sessionid);
+        }
         return pc.setRemoteDescription(answer);
     }).catch((e) => {
         alert(e);
     });
 }
 
-function start() {
+async function start() {
     var config = {
         sdpSemantics: 'unified-plan'
     };
 
-    if (document.getElementById('use-stun').checked) {
+    const iceServers = await fetchIceServers();
+    if (iceServers.length > 0) {
+        config.iceServers = iceServers;
+        config.iceTransportPolicy = 'relay';
+    } else if (document.getElementById('use-stun').checked) {
         config.iceServers = [{ urls: ['stun:stun.l.google.com:19302'] }];
     }
 
@@ -55,10 +91,26 @@ function start() {
 
     // connect audio / video
     pc.addEventListener('track', (evt) => {
+        const delay = getPlayoutDelaySeconds();
+        if (evt.receiver && typeof evt.receiver.playoutDelayHint !== 'undefined') {
+            evt.receiver.playoutDelayHint = delay;
+        }
         if (evt.track.kind == 'video') {
             document.getElementById('video').srcObject = evt.streams[0];
         } else {
             document.getElementById('audio').srcObject = evt.streams[0];
+        }
+    });
+    pc.addEventListener('connectionstatechange', () => {
+        if (!pc) return;
+        if (pc.connectionState === 'connected') {
+            if (typeof window.onWebRTCConnected === 'function') {
+                window.onWebRTCConnected();
+            }
+        } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+            if (typeof window.onWebRTCDisconnected === 'function') {
+                window.onWebRTCDisconnected();
+            }
         }
     });
 
@@ -72,7 +124,13 @@ function stop() {
 
     // close peer connection
     setTimeout(() => {
-        pc.close();
+        if (pc) {
+            pc.close();
+            pc = null;
+            if (typeof window.onWebRTCDisconnected === 'function') {
+                window.onWebRTCDisconnected();
+            }
+        }
     }, 500);
 }
 

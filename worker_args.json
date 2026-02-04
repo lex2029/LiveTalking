@@ -1,0 +1,23 @@
+[
+  "--model", "ernerf",
+  "--transport", "webrtc",
+  "-O",
+  "--secrets", "/workspace/LiveTalking/keys.json",
+  "--tts", "elevenlabs",
+  "--asr_model", "facebook/wav2vec2-base-960h",
+  "--asr_dim", "29",
+  "-l", "6",
+  "-m", "24",
+  "-r", "6",
+  "--audio_amp", "1.35",
+  "--lip_smooth", "0.2",
+  "--workspace", "ernerf/trial_obama_torso",
+  "--ckpt", "ernerf/trial_obama_torso/checkpoints/ngp.pth",
+  "--pose", "ernerf/data/obama/transforms_train.json",
+  "--au", "ernerf/data/obama/au.csv",
+  "--torso_imgs", "ernerf/data/obama/torso_imgs",
+  "--bg_img", "ernerf/data/obama/bc.jpg",
+  "--W", "512",
+  "--H", "512",
+  "--max_steps", "12"
+]

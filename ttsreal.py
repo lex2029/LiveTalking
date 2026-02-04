@@ -152,6 +152,128 @@ class EdgeTTS(BaseTTS):
             logger.exception('edgetts')
 
 ###########################################################################################
+class ElevenLabsTTS(BaseTTS):
+    def _create_bytes_stream(self, byte_stream):
+        stream, sample_rate = sf.read(byte_stream) # [T*sample_rate,] float64
+        logger.info(f'[INFO]tts audio stream {sample_rate}: {stream.shape}')
+        stream = stream.astype(np.float32)
+
+        if stream.ndim > 1:
+            logger.info(f'[WARN] audio has {stream.shape[1]} channels, only use the first.')
+            stream = stream[:, 0]
+
+        if sample_rate != self.sample_rate and stream.shape[0] > 0:
+            logger.info(f'[WARN] audio sample rate is {sample_rate}, resampling into {self.sample_rate}.')
+            stream = resampy.resample(x=stream, sr_orig=sample_rate, sr_new=self.sample_rate)
+
+        return stream
+
+    def _stream_pcm(self, response, text, textevent):
+        # PCM 16-bit little-endian stream (no WAV header)
+        buf = bytearray()
+        started = False
+        chunk_bytes = self.chunk * 2
+
+        for chunk in response.iter_content(chunk_size=4096):
+            if not chunk or self.state != State.RUNNING:
+                continue
+            buf.extend(chunk)
+            while len(buf) >= chunk_bytes and self.state == State.RUNNING:
+                frame_bytes = buf[:chunk_bytes]
+                del buf[:chunk_bytes]
+                frame = np.frombuffer(frame_bytes, dtype=np.int16).astype(np.float32) / 32767.0
+                eventpoint = None
+                if not started:
+                    eventpoint = {'status': 'start', 'text': text, 'msgevent': textevent}
+                    started = True
+                self.parent.put_audio_frame(frame, eventpoint)
+
+        if not started or self.state != State.RUNNING:
+            return
+
+        # flush last partial buffer as end
+        if len(buf) > 0:
+            if len(buf) < chunk_bytes:
+                buf.extend(b'\x00' * (chunk_bytes - len(buf)))
+            frame = np.frombuffer(buf[:chunk_bytes], dtype=np.int16).astype(np.float32) / 32767.0
+            eventpoint = {'status': 'end', 'text': text, 'msgevent': textevent}
+            self.parent.put_audio_frame(frame, eventpoint)
+
+    def _stream_to_bytes(self, response):
+        self.input_stream.seek(0)
+        self.input_stream.truncate()
+        for chunk in response.iter_content(chunk_size=4096):
+            if chunk and self.state == State.RUNNING:
+                self.input_stream.write(chunk)
+        self.input_stream.seek(0)
+
+    def txt_to_audio(self, msg):
+        text, textevent = msg
+        api_key = getattr(self.parent, "eleven_api_key", "") or os.getenv("ELEVEN_API_KEY", "")
+        voice_id = getattr(self.parent, "eleven_voice_id", "") or os.getenv("ELEVEN_VOICE_ID", "")
+        model_id = getattr(self.parent, "eleven_model_id", "") or os.getenv("ELEVEN_MODEL_ID", "eleven_turbo_v2")
+        output_format = getattr(self.parent, "eleven_output_format", "") or os.getenv("ELEVEN_OUTPUT_FORMAT", "pcm_16000")
+        optimize_latency = getattr(self.parent, "eleven_optimize_latency", None)
+        if optimize_latency is None:
+            try:
+                optimize_latency = int(os.getenv("ELEVEN_OPTIMIZE_LATENCY", "1"))
+            except ValueError:
+                optimize_latency = 1
+
+        if not api_key or not voice_id:
+            logger.error("ElevenLabs TTS missing API key or voice ID.")
+            return
+
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+        params = {"output_format": output_format}
+        if optimize_latency is not None:
+            params["optimize_streaming_latency"] = int(optimize_latency)
+
+        payload = {
+            "text": text,
+            "model_id": model_id,
+        }
+
+        headers = {
+            "xi-api-key": api_key,
+            "Content-Type": "application/json",
+        }
+
+        t = time.time()
+        try:
+            with requests.post(url, headers=headers, params=params, json=payload, stream=True, timeout=60) as response:
+                if response.status_code != 200:
+                    logger.error("ElevenLabs TTS error: %s", response.text)
+                    return
+
+                if output_format.startswith("pcm_"):
+                    self._stream_pcm(response, text, textevent)
+                else:
+                    self._stream_to_bytes(response)
+                    if self.input_stream.getbuffer().nbytes <= 0:
+                        logger.error("ElevenLabs TTS returned empty audio.")
+                        return
+                    self.input_stream.seek(0)
+                    stream = self._create_bytes_stream(self.input_stream)
+                    streamlen = stream.shape[0]
+                    idx = 0
+                    while streamlen >= self.chunk and self.state == State.RUNNING:
+                        eventpoint = None
+                        streamlen -= self.chunk
+                        if idx == 0:
+                            eventpoint = {'status': 'start', 'text': text, 'msgevent': textevent}
+                        elif streamlen < self.chunk:
+                            eventpoint = {'status': 'end', 'text': text, 'msgevent': textevent}
+                        self.parent.put_audio_frame(stream[idx:idx+self.chunk], eventpoint)
+                        idx += self.chunk
+                    self.input_stream.seek(0)
+                    self.input_stream.truncate()
+        except Exception:
+            logger.exception("elevenlabs")
+            return
+        logger.info(f'-------elevenlabs tts time:{time.time()-t:.4f}s')
+
+###########################################################################################
 class FishTTS(BaseTTS):
     def txt_to_audio(self,msg): 
         text,textevent = msg

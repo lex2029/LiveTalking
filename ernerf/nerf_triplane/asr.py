@@ -4,7 +4,6 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCTC, AutoProcessor
 
-import pyaudio
 import soundfile as sf
 import resampy
 
@@ -45,7 +44,9 @@ class ASR:
         self.chunk = self.sample_rate // self.fps # 320 samples per chunk (20ms * 16000 / 1000)
         self.mode = 'live' if opt.asr_wav == '' else 'file'
 
-        if 'esperanto' in self.opt.asr_model:
+        if getattr(self.opt, 'asr_dim', 0) > 0:
+            self.audio_dim = self.opt.asr_dim
+        elif 'esperanto' in self.opt.asr_model:
             self.audio_dim = 44
         elif 'deepspeech' in self.opt.asr_model:
             self.audio_dim = 29
@@ -67,20 +68,28 @@ class ASR:
 
 
         self.exit_event = Event()
-        self.audio_instance = pyaudio.PyAudio()
+        self.audio_instance = None
+        self.pyaudio = None
+        if self.mode == 'live' or self.play:
+            try:
+                import pyaudio  # type: ignore
+            except ImportError as e:
+                raise RuntimeError("pyaudio is required for live/play modes. Install pyaudio or run with --wav.") from e
+            self.pyaudio = pyaudio
+            self.audio_instance = pyaudio.PyAudio()
 
         # create input stream
         if self.mode == 'file':
             self.file_stream = self.create_file_stream()
         else:
             # start a background process to read frames
-            self.input_stream = self.audio_instance.open(format=pyaudio.paInt16, channels=1, rate=self.sample_rate, input=True, output=False, frames_per_buffer=self.chunk)
+            self.input_stream = self.audio_instance.open(format=self.pyaudio.paInt16, channels=1, rate=self.sample_rate, input=True, output=False, frames_per_buffer=self.chunk)
             self.queue = Queue()
             self.process_read_frame = Thread(target=_read_frame, args=(self.input_stream, self.exit_event, self.queue, self.chunk))
         
         # play out the audio too...?
         if self.play:
-            self.output_stream = self.audio_instance.open(format=pyaudio.paInt16, channels=1, rate=self.sample_rate, input=False, output=True, frames_per_buffer=self.chunk)
+            self.output_stream = self.audio_instance.open(format=self.pyaudio.paInt16, channels=1, rate=self.sample_rate, input=False, output=True, frames_per_buffer=self.chunk)
             self.output_queue = Queue()
             self.process_play_frame = Thread(target=_play_frame, args=(self.output_stream, self.exit_event, self.output_queue, self.chunk))
 
@@ -324,7 +333,14 @@ class ASR:
         
         with torch.no_grad():
             result = self.model(inputs.input_values.to(self.device))
-            logits = result.logits # [1, N - 1, 32]
+            logits = result.logits # [1, N - 1, C]
+
+        # align logits dim to expected audio_dim
+        if logits.shape[-1] != self.audio_dim:
+            if logits.shape[-1] > self.audio_dim:
+                logits = logits[..., :self.audio_dim]
+            else:
+                logits = F.pad(logits, (0, self.audio_dim - logits.shape[-1]))
         
         # cut off stride
         left = max(0, self.stride_left_size)

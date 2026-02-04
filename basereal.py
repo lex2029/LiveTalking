@@ -35,7 +35,7 @@ import soundfile as sf
 import av
 from fractions import Fraction
 
-from ttsreal import EdgeTTS,SovitsTTS,XTTS,CosyVoiceTTS,FishTTS,TencentTTS
+from ttsreal import EdgeTTS,SovitsTTS,XTTS,CosyVoiceTTS,FishTTS,TencentTTS,ElevenLabsTTS
 from logger import logger
 
 from tqdm import tqdm
@@ -54,6 +54,16 @@ class BaseReal:
         self.chunk = self.sample_rate // opt.fps # 320 samples per chunk (20ms * 16000 / 1000)
         self.sessionid = self.opt.sessionid
 
+        # runtime-configurable keys (can be updated per session via /config)
+        self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        self.openai_base_url = os.getenv("OPENAI_BASE_URL", opt.openai_base if hasattr(opt, "openai_base") else "")
+        self.openai_model = os.getenv("OPENAI_MODEL", opt.openai_model if hasattr(opt, "openai_model") else "gpt-4o-mini")
+        self.eleven_api_key = os.getenv("ELEVEN_API_KEY", "")
+        self.eleven_voice_id = os.getenv("ELEVEN_VOICE_ID", opt.eleven_voice if hasattr(opt, "eleven_voice") else "")
+        self.eleven_model_id = os.getenv("ELEVEN_MODEL_ID", opt.eleven_model if hasattr(opt, "eleven_model") else "eleven_turbo_v2")
+        self.eleven_output_format = os.getenv("ELEVEN_OUTPUT_FORMAT", opt.eleven_output_format if hasattr(opt, "eleven_output_format") else "pcm_16000")
+        self.eleven_optimize_latency = int(os.getenv("ELEVEN_OPTIMIZE_LATENCY", opt.eleven_optimize_latency if hasattr(opt, "eleven_optimize_latency") else 1))
+
         if opt.tts == "edgetts":
             self.tts = EdgeTTS(opt,self)
         elif opt.tts == "gpt-sovits":
@@ -66,6 +76,8 @@ class BaseReal:
             self.tts = FishTTS(opt,self)
         elif opt.tts == "tencent":
             self.tts = TencentTTS(opt,self)
+        elif opt.tts == "elevenlabs":
+            self.tts = ElevenLabsTTS(opt,self)
         
         self.speaking = False
 

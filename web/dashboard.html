@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>livetalking数字人交互平台</title>
+    <title>LiveTalking — платформа общения с цифровым аватаром</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
@@ -281,7 +281,7 @@
     <div class="dashboard-container">
         <div class="row">
             <div class="col-12">
-                <h1 class="text-center mb-4">livetalking数字人交互平台</h1>
+                <h1 class="text-center mb-4">LiveTalking — платформа общения с цифровым аватаром</h1>
             </div>
         </div>
 
@@ -292,15 +292,16 @@
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <div>
                             <span class="status-indicator status-disconnected" id="connection-status"></span>
-                            <span id="status-text">未连接</span>
+                            <span id="status-text">Не подключено</span>
                         </div>
                     </div>
                     <div class="card-body p-0">
                         <div class="video-container">
                             <video id="video" autoplay playsinline></video>
+                            <audio id="audio" autoplay></audio>
                             <div class="recording-indicator" id="recording-indicator">
                                 <div class="blink"></div>
-                                <span>录制中</span>
+                                <span>Идет запись</span>
                             </div>
                         </div>
                         
@@ -308,20 +309,32 @@
                             <div class="row">
                                 <div class="col-md-6 mb-3">
                                     <button class="btn btn-primary w-100" id="start">
-                                        <i class="bi bi-play-fill"></i> 开始连接
+                                        <i class="bi bi-play-fill"></i> Подключиться
                                     </button>
                                     <button class="btn btn-danger w-100" id="stop" style="display: none;">
-                                        <i class="bi bi-stop-fill"></i> 停止连接
+                                        <i class="bi bi-stop-fill"></i> Отключить
                                     </button>
                                 </div>
                                 <div class="col-md-6 mb-3">
                                     <div class="d-flex">
                                         <button class="btn btn-outline-primary flex-grow-1 me-2" id="btn_start_record">
-                                            <i class="bi bi-record-fill"></i> 开始录制
+                                            <i class="bi bi-record-fill"></i> Начать запись
                                         </button>
                                         <button class="btn btn-outline-danger flex-grow-1" id="btn_stop_record" disabled>
-                                            <i class="bi bi-stop-fill"></i> 停止录制
+                                            <i class="bi bi-stop-fill"></i> Остановить запись
                                         </button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-12">
+                                    <div class="alert alert-warning d-none" id="timeout-notice" role="alert">
+                                        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                                            <span id="timeout-notice-text">Сессия завершена из‑за неактивности (60 секунд). Нажмите «Подключиться» или перезагрузите страницу.</span>
+                                            <button class="btn btn-warning btn-sm" id="reload-page" type="button">
+                                                <i class="bi bi-arrow-clockwise"></i> Перезагрузить страницу
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -329,7 +342,7 @@
                             <div class="row">
                                 <div class="col-12">
                                     <div class="video-size-control">
-                                        <label for="video-size-slider" class="form-label">视频大小调节: <span id="video-size-value">100%</span></label>
+                                        <label for="video-size-slider" class="form-label">Размер видео: <span id="video-size-value">100%</span></label>
                                         <input type="range" class="form-range" id="video-size-slider" min="50" max="150" value="100">
                                     </div>
                                 </div>
@@ -340,8 +353,31 @@
                                     <div class="col-md-12">
                                         <div class="form-check form-switch mb-3">
                                             <input class="form-check-input" type="checkbox" id="use-stun">
-                                            <label class="form-check-label" for="use-stun">使用STUN服务器</label>
+                                            <label class="form-check-label" for="use-stun">Использовать STUN-сервер</label>
                                         </div>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="quality-select" class="form-label">Качество потока</label>
+                                        <select class="form-select" id="quality-select">
+                                            <option value="low">Низкое (стабильнее)</option>
+                                            <option value="balanced" selected>Сбалансированное</option>
+                                            <option value="high">Высокое (лучшее качество)</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label for="playout-delay-select" class="form-label">Буфер (задержка)</label>
+                                        <select class="form-select" id="playout-delay-select">
+                                            <option value="0">0 мс (минимум)</option>
+                                            <option value="200" selected>200 мс (стабильнее)</option>
+                                            <option value="400">400 мс (макс. стабильность)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-12">
+                                        <div class="form-text">Изменения применятся при следующем подключении.</div>
                                     </div>
                                 </div>
                             </div>
@@ -356,28 +392,28 @@
                     <div class="card-header">
                         <ul class="nav nav-tabs card-header-tabs" id="interaction-tabs" role="tablist">
                             <li class="nav-item" role="presentation">
-                                <button class="nav-link active" id="chat-tab" data-bs-toggle="tab" data-bs-target="#chat" type="button" role="tab" aria-controls="chat" aria-selected="true">对话模式</button>
+                                <button class="nav-link active" id="chat-tab" data-bs-toggle="tab" data-bs-target="#chat" type="button" role="tab" aria-controls="chat" aria-selected="true">Диалог</button>
                             </li>
                             <li class="nav-item" role="presentation">
-                                <button class="nav-link" id="tts-tab" data-bs-toggle="tab" data-bs-target="#tts" type="button" role="tab" aria-controls="tts" aria-selected="false">朗读模式</button>
+                                <button class="nav-link" id="tts-tab" data-bs-toggle="tab" data-bs-target="#tts" type="button" role="tab" aria-controls="tts" aria-selected="false">Чтение</button>
                             </li>
                         </ul>
                     </div>
                     <div class="card-body">
                         <div class="tab-content" id="interaction-tabs-content">
-                            <!-- 对话模式 -->
+                            <!-- Диалог -->
                             <div class="tab-pane fade show active" id="chat" role="tabpanel" aria-labelledby="chat-tab">
                                 <div class="asr-container mb-3" id="chat-messages">
                                     <div class="asr-text system-message">
-                                        系统: 欢迎使用livetalking，请点击"开始连接"按钮开始对话。
+                                        Система: Добро пожаловать в LiveTalking. Нажмите «Подключиться», чтобы начать диалог.
                                     </div>
                                 </div>
                                 
                                 <form id="chat-form">
                                     <div class="input-group mb-3">
-                                        <textarea class="form-control" id="chat-message" rows="3" placeholder="输入您想对数字人说的话..."></textarea>
+                                        <textarea class="form-control" id="chat-message" rows="3" placeholder="Введите сообщение для аватара..."></textarea>
                                         <button class="btn btn-primary" type="submit">
-                                            <i class="bi bi-send"></i> 发送
+                                            <i class="bi bi-send"></i> Отправить
                                         </button>
                                     </div>
                                 </form>
@@ -386,18 +422,18 @@
                                 <div class="voice-record-btn" id="voice-record-btn">
                                     <i class="bi bi-mic-fill"></i>
                                 </div>
-                                <div class="voice-record-label">按住说话，松开发送</div>
+                                <div class="voice-record-label">Удерживайте, чтобы говорить; отпустите, чтобы отправить</div>
                             </div>
                             
-                            <!-- 朗读模式 -->
+                            <!-- Чтение -->
                             <div class="tab-pane fade" id="tts" role="tabpanel" aria-labelledby="tts-tab">
                                 <form id="echo-form">
                                     <div class="mb-3">
-                                        <label for="message" class="form-label">输入要朗读的文本</label>
-                                        <textarea class="form-control" id="message" rows="6" placeholder="输入您想让数字人朗读的文字..."></textarea>
+                                        <label for="message" class="form-label">Введите текст для озвучивания</label>
+                                        <textarea class="form-control" id="message" rows="6" placeholder="Введите текст, который нужно озвучить..."></textarea>
                                     </div>
                                     <button type="submit" class="btn btn-primary w-100">
-                                        <i class="bi bi-volume-up"></i> 朗读文本
+                                        <i class="bi bi-volume-up"></i> Озвучить текст
                                     </button>
                                 </form>
                             </div>
@@ -408,7 +444,7 @@
         </div>
 
         <div class="footer">
-            <p>Made with ❤️ by Marstaos | Frontend & Performance Optimization</p>
+            <p>Сделано с ❤️ Marstaos | Фронтенд и оптимизация производительности</p>
         </div>
     </div>
 
@@ -436,16 +472,16 @@
                 switch(status) {
                     case 'connected':
                         statusIndicator.addClass('status-connected');
-                        statusText.text('已连接');
+                        statusText.text('Подключено');
                         break;
                     case 'connecting':
                         statusIndicator.addClass('status-connecting');
-                        statusText.text('连接中...');
+                        statusText.text('Подключение...');
                         break;
                     case 'disconnected':
                     default:
                         statusIndicator.addClass('status-disconnected');
-                        statusText.text('未连接');
+                        statusText.text('Не подключено');
                         break;
                 }
             }
@@ -454,7 +490,7 @@
             function addChatMessage(message, type = 'user') {
                 const messagesContainer = $('#chat-messages');
                 const messageClass = type === 'user' ? 'user-message' : 'system-message';
-                const sender = type === 'user' ? '您' : '数字人';
+                const sender = type === 'user' ? 'Вы' : 'Аватар';
                 
                 const messageElement = $(`
                     <div class="asr-text ${messageClass}">
@@ -469,6 +505,7 @@
             // 开始/停止按钮
             $('#start').click(function() {
                 updateConnectionStatus('connecting');
+                markUserActivity();
                 start();
                 $(this).hide();
                 $('#stop').show();
@@ -498,9 +535,13 @@
                 updateConnectionStatus('disconnected');
             });
 
+            $('#reload-page').click(function() {
+                window.location.reload();
+            });
+
             // 录制功能
             $('#btn_start_record').click(function() {
-                console.log('Starting recording...');
+                console.log('Подключитьсяing recording...');
                 fetch('/record', {
                     body: JSON.stringify({
                         type: 'start_record',
@@ -525,7 +566,7 @@
             });
 
             $('#btn_stop_record').click(function() {
-                console.log('Stopping recording...');
+                console.log('Отключитьping recording...');
                 fetch('/record', {
                     body: JSON.stringify({
                         type: 'end_record',
@@ -553,8 +594,9 @@
                 e.preventDefault();
                 var message = $('#message').val();
                 if (!message.trim()) return;
+                markUserActivity();
                 
-                console.log('Sending echo message:', message);
+                console.log('Отправитьing echo message:', message);
                 
                 fetch('/human', {
                     body: JSON.stringify({
@@ -570,7 +612,7 @@
                 });
                 
                 $('#message').val('');
-                addChatMessage(`已发送朗读请求: "${message}"`, 'system');
+                addChatMessage(`Запрос на озвучивание отправлен: "${message}"`, 'system');
             });
 
             // 聊天模式表单提交
@@ -578,8 +620,9 @@
                 e.preventDefault();
                 var message = $('#chat-message').val();
                 if (!message.trim()) return;
+                markUserActivity();
                 
-                console.log('Sending chat message:', message);
+                console.log('Отправитьing chat message:', message);
                 
                 fetch('/human', {
                     body: JSON.stringify({
@@ -603,6 +646,74 @@
             let audioChunks = [];
             let isRecording = false;
             let recognition;
+            let lastUserMessageAt = Date.now();
+            const idleTimeoutMs = 60000;
+            let greetedSessionId = null;
+            let idleTimerEnabled = false;
+
+            function markUserActivity() {
+                lastUserMessageAt = Date.now();
+                hideTimeoutNotice();
+            }
+
+            function showTimeoutNotice(text) {
+                const notice = $('#timeout-notice');
+                $('#timeout-notice-text').text(text);
+                notice.removeClass('d-none');
+            }
+
+            function hideTimeoutNotice() {
+                $('#timeout-notice').addClass('d-none');
+            }
+
+            function onPeerDisconnected(state) {
+                idleTimerEnabled = false;
+                updateConnectionStatus('disconnected');
+                addChatMessage('Сессия завершена (соединение: ' + state + '). Нажмите «Подключиться», чтобы подключиться снова.', 'system');
+            }
+
+            function sendGreetingOnce() {
+                const sid = parseInt(document.getElementById('sessionid').value);
+                if (!sid) {
+                    setTimeout(sendGreetingOnce, 300);
+                    return;
+                }
+                if (greetedSessionId === sid) return;
+                greetedSessionId = sid;
+                const greeting = 'Hi! Welcome. I am ready whenever you are.'; 
+                markUserActivity();
+                fetch('/human', {
+                    body: JSON.stringify({
+                        text: greeting,
+                        type: 'echo',
+                        interrupt: true,
+                        sessionid: sid,
+                    }),
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    method: 'POST'
+                }).then(function(response) {
+                    if (!response.ok) {
+                        addChatMessage('Не удалось отправить приветствие (сессия не активна).', 'system');
+                        return;
+                    }
+                    addChatMessage(`Автоприветствие: "${greeting}"`, 'system');
+                }).catch(function() {
+                    addChatMessage('Не удалось отправить приветствие (ошибка сети).', 'system');
+                });
+            }
+
+            setInterval(function() {
+                if (idleTimerEnabled && pc && pc.connectionState === 'connected') {
+                    if (Date.now() - lastUserMessageAt > idleTimeoutMs) {
+                        stop();
+                        updateConnectionStatus('disconnected');
+                        showTimeoutNotice('Сессия завершена из‑за неактивности (60 секунд). Нажмите «Подключиться» или перезагрузите страницу.');
+                        addChatMessage('Сессия завершена из‑за неактивности (60 секунд). Нажмите «Подключиться» или перезагрузите страницу.', 'system');
+                    }
+                }
+            }, 5000);
             
             // 检查浏览器是否支持语音识别
             const isSpeechRecognitionSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
@@ -611,7 +722,7 @@
                 recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
                 recognition.continuous = true;
                 recognition.interimResults = true;
-                recognition.lang = 'zh-CN';
+                recognition.lang = 'ru-RU';
                 
                 recognition.onresult = function(event) {
                     let interimTranscript = '';
@@ -632,7 +743,7 @@
                 };
                 
                 recognition.onerror = function(event) {
-                    console.error('语音识别错误:', event.error);
+                    console.error('Ошибка распознавания речи:', event.error);
                 };
             }
             
@@ -650,10 +761,10 @@
             function startRecording() {
                 if (isRecording) return;
                 
-                navigator.mediaDevices.getUserMedia({ audio: true })
+                navigator.mediaDevices.getUserМедиа({ audio: true })
                     .then(function(stream) {
                         audioChunks = [];
-                        mediaRecorder = new MediaRecorder(stream);
+                        mediaRecorder = new МедиаRecorder(stream);
                         
                         mediaRecorder.ondataavailable = function(e) {
                             if (e.data.size > 0) {
@@ -672,8 +783,8 @@
                         }
                     })
                     .catch(function(error) {
-                        console.error('无法访问麦克风:', error);
-                        alert('无法访问麦克风，请检查浏览器权限设置。');
+                        console.error('Нет доступа к микрофону:', error);
+                        alert('Нет доступа к микрофону. Проверьте разрешения браузера.');
                     });
             }
 
@@ -695,11 +806,12 @@
                     recognition.stop();
                 }
                 
-                // 获取识别的文本并发送
+                // 获取识别的文本并Отправить
                 setTimeout(function() {
                     const recognizedText = $('#chat-message').val().trim();
                     if (recognizedText) {
-                        // 发送识别的文本
+                        markUserActivity();
+                        // Отправить识别的文本
                         fetch('/human', {
                             body: JSON.stringify({
                                 text: recognizedText,
@@ -724,24 +836,47 @@
                 const originalOnConnected = window.onWebRTCConnected;
                 window.onWebRTCConnected = function() {
                     updateConnectionStatus('connected');
+                    idleTimerEnabled = true;
+                    markUserActivity();
+                    sendGreetingOnce();
                     if (originalOnConnected) originalOnConnected();
                 };
             } else {
                 window.onWebRTCConnected = function() {
                     updateConnectionStatus('connected');
+                    idleTimerEnabled = true;
+                    markUserActivity();
+                    sendGreetingOnce();
                 };
             }
+
+            // Срабатывает после получения sessionid
+            window.onSessionReady = function() {
+                sendGreetingOnce();
+            };
+
+            window.getQualityPreference = function() {
+                const value = $('#quality-select').val();
+                return value || 'balanced';
+            };
+
+            window.getPlayoutDelaySeconds = function() {
+                const value = parseInt($('#playout-delay-select').val() || '0', 10);
+                return Math.max(0, value) / 1000;
+            };
 
             // 当连接断开时更新状态
             if (typeof window.onWebRTCDisconnected === 'function') {
                 const originalOnDisconnected = window.onWebRTCDisconnected;
                 window.onWebRTCDisconnected = function() {
                     updateConnectionStatus('disconnected');
+                    idleTimerEnabled = false;
                     if (originalOnDisconnected) originalOnDisconnected();
                 };
             } else {
                 window.onWebRTCDisconnected = function() {
                     updateConnectionStatus('disconnected');
+                    idleTimerEnabled = false;
                 };
             }
 
@@ -761,10 +896,10 @@
                 var url = "http://" + host + ":1985/rtc/v1/whep/?app=live&stream=livestream";
                 
                 sdk.play(url).then(function(session) {
-                    console.log('WebRTC播放已启动，会话ID:', session.sessionid);
+                    console.log('WebRTC-воспроизведение запущено, session ID:', session.sessionid);
                 }).catch(function(reason) {
                     sdk.close();
-                    console.error('WebRTC播放失败:', reason);
+                    console.error('Ошибка WebRTC-воспроизведения:', reason);
                 });
             }
         });

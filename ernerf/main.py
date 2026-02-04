@@ -216,7 +216,7 @@ if __name__ == '__main__':
     
     else:
 
-        optimizer = lambda model: torch.optim.AdamW(model.get_params(opt.lr, opt.lr_net), betas=(0, 0.99), eps=1e-8)
+        optimizer = lambda model: torch.optim.AdamW(model.get_params(opt.lr, opt.lr_net), betas=(0.0, 0.99), eps=1e-8)
 
         train_loader = NeRFDataset(opt, device=device, type='train').dataloader()
 

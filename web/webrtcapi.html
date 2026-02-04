@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WebRTC webcam</title>
+    <title>WebRTC</title>
     <style>
     button {
         padding: 8px 16px;
@@ -26,32 +26,33 @@
 
 <div class="option">
     <input id="use-stun" type="checkbox"/>
-    <label for="use-stun">Use STUN server</label>
+    <label for="use-stun">Использовать STUN-сервер</label>
 </div>
-<button id="start" onclick="start()">Start</button>
-<button id="stop" style="display: none" onclick="stop()">Stop</button>
-<button class="btn btn-primary" id="btn_start_record">Start Recording</button>
-<button class="btn btn-primary" id="btn_stop_record" disabled>Stop Recording</button>
-<!-- <button class="btn btn-primary" id="btn_download">Download Video</button> -->
+<button id="start" onclick="start()">Подключиться</button>
+<button id="stop" style="display: none" onclick="stop()">Отключить</button>
+<button class="btn btn-primary" id="btn_start_record">Начать запись</button>
+<button class="btn btn-primary" id="btn_stop_record" disabled>Остановить запись</button>
+<!-- <button class="btn btn-primary" id="btn_download">Скачать видео</button> -->
 <input type="hidden" id="sessionid" value="0">
 <form class="form-inline" id="echo-form">
     <div class="form-group">
-      <p>input text</p>
+      <p>Введите текст</p>
 
-      <textarea cols="2" rows="3" style="width:600px;height:50px;" class="form-control" id="message">test</textarea>
+      <textarea cols="2" rows="3" style="width:600px;height:50px;" class="form-control" id="message">тест</textarea>
     </div>
-    <button type="submit" class="btn btn-default">Send</button>
+    <button type="submit" class="btn btn-default">Отправить</button>
   </form>
 
+
 <div id="media">
-    <h2>Media</h2>
+    <h2>Медиа</h2>
 
     <audio id="audio" autoplay="true"></audio>
     <video id="video" style="width:600px;" autoplay="true" playsinline="true"></video>
 </div>
 
 <script src="client.js"></script>
-<script type="text/javascript" src="http://cdn.sockjs.org/sockjs-0.3.4.js"></script>
+<script type="text/javascript" src="https://cdn.sockjs.org/sockjs-0.3.4.js"></script>
 <script type="text/javascript" src="https://code.jquery.com/jquery-2.1.1.min.js"></script>
 </body>
 <script type="text/javascript" charset="utf-8">
@@ -78,7 +79,7 @@
 	  $('#echo-form').on('submit', function(e) {
       e.preventDefault();
       var message = $('#message').val();
-      console.log('Sending: ' + message);
+      console.log('Отправитьing: ' + message);
       console.log('sessionid: ',document.getElementById('sessionid').value);
       fetch('/human', {
             body: JSON.stringify({
@@ -98,7 +99,7 @@
 
     $('#btn_start_record').click(function() {
         // 开始录制
-        console.log('Starting recording...');
+        console.log('Подключитьсяing recording...');
         fetch('/record', {
             body: JSON.stringify({
                     type: 'start_record',
@@ -124,7 +125,7 @@
 
     $('#btn_stop_record').click(function() {
         // 结束录制
-        console.log('Stopping recording...');
+        console.log('Отключитьping recording...');
         fetch('/record', {
             body: JSON.stringify({
                     type: 'end_record',

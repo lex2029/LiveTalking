@@ -33,7 +33,9 @@ from aiohttp import web
 import aiohttp
 import aiohttp_cors
 from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc import RTCConfiguration, RTCIceServer
 from aiortc.rtcrtpsender import RTCRtpSender
+from aiortc.rtcrtpparameters import RTCRtpEncodingParameters
 from webrtc import HumanPlayer
 from basereal import BaseReal
 from llm import llm_response
@@ -43,6 +45,8 @@ import random
 import shutil
 import asyncio
 import torch
+import os
+import time
 from typing import Dict
 from logger import logger
 
@@ -53,6 +57,101 @@ nerfreals:Dict[int, BaseReal] = {} #sessionid:BaseReal
 opt = None
 model = None
 avatar = None
+_ice_cache = {"expires_at": 0, "ice_servers": None}
+_default_config = {
+    "openai_key": "",
+    "openai_base": "",
+    "openai_model": "",
+    "eleven_key": "",
+    "eleven_voice": "",
+    "eleven_model": "",
+    "eleven_latency": None,
+    "eleven_output_format": "",
+}
+
+# WebRTC quality presets (bitrate in bps).
+QUALITY_PROFILES = {
+    "low": {
+        "max_bitrate": 350_000,
+        "max_fps": 15,
+        "scale": 1.5,
+    },
+    "balanced": {
+        "max_bitrate": 800_000,
+        "max_fps": 20,
+        "scale": 1.0,
+    },
+    "high": {
+        "max_bitrate": 1_600_000,
+        "max_fps": 25,
+        "scale": 1.0,
+    },
+}
+
+
+def _apply_video_quality(sender: RTCRtpSender, quality: str) -> None:
+    profile = QUALITY_PROFILES.get((quality or "").lower())
+    if not profile:
+        return
+    params = sender.getParameters()
+    if not params.encodings:
+        params.encodings = [RTCRtpEncodingParameters()]
+    enc = params.encodings[0]
+    if profile.get("max_bitrate"):
+        enc.maxBitrate = int(profile["max_bitrate"])
+    if profile.get("max_fps"):
+        enc.maxFramerate = int(profile["max_fps"])
+    if profile.get("scale"):
+        enc.scaleResolutionDownBy = float(profile["scale"])
+    sender.setParameters(params)
+
+def _load_secrets(path: str):
+    if not path:
+        return
+    try:
+        secrets_path = os.path.expanduser(path)
+        if not os.path.isfile(secrets_path):
+            return
+        with open(secrets_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.info(f"Failed to load secrets file: {e}")
+        return
+
+    def _pick(*keys):
+        for k in keys:
+            if k in data and data[k] not in (None, ""):
+                return str(data[k]).strip()
+        return ""
+
+    openai_key = _pick("openai_key", "openai_api_key", "OPENAI_API_KEY")
+    openai_base = _pick("openai_base", "openai_base_url", "OPENAI_BASE_URL")
+    openai_model = _pick("openai_model", "OPENAI_MODEL")
+    eleven_key = _pick("eleven_key", "eleven_api_key", "ELEVEN_API_KEY")
+    eleven_voice = _pick("eleven_voice", "eleven_voice_id", "ELEVEN_VOICE_ID")
+    eleven_model = _pick("eleven_model", "eleven_model_id", "ELEVEN_MODEL_ID")
+    eleven_latency = data.get("eleven_latency", data.get("eleven_optimize_latency"))
+    eleven_output_format = _pick("eleven_output_format", "ELEVEN_OUTPUT_FORMAT")
+
+    if openai_key:
+        _default_config["openai_key"] = openai_key
+    if openai_base:
+        _default_config["openai_base"] = openai_base
+    if openai_model:
+        _default_config["openai_model"] = openai_model
+    if eleven_key:
+        _default_config["eleven_key"] = eleven_key
+    if eleven_voice:
+        _default_config["eleven_voice"] = eleven_voice
+    if eleven_model:
+        _default_config["eleven_model"] = eleven_model
+    if eleven_output_format:
+        _default_config["eleven_output_format"] = eleven_output_format
+    if eleven_latency is not None:
+        try:
+            _default_config["eleven_latency"] = int(eleven_latency)
+        except Exception:
+            pass
         
 
 #####webrtc###############################
@@ -78,12 +177,83 @@ def build_nerfreal(sessionid:int)->BaseReal:
     elif opt.model == 'ultralight':
         from lightreal import LightReal
         nerfreal = LightReal(opt,model,avatar)
+    # apply cached defaults (if any)
+    if _default_config.get("openai_key"):
+        nerfreal.openai_api_key = _default_config["openai_key"]
+    if _default_config.get("openai_base"):
+        nerfreal.openai_base_url = _default_config["openai_base"]
+    if _default_config.get("openai_model"):
+        nerfreal.openai_model = _default_config["openai_model"]
+    if _default_config.get("eleven_key"):
+        nerfreal.eleven_api_key = _default_config["eleven_key"]
+    if _default_config.get("eleven_voice"):
+        nerfreal.eleven_voice_id = _default_config["eleven_voice"]
+    if _default_config.get("eleven_model"):
+        nerfreal.eleven_model_id = _default_config["eleven_model"]
+    if _default_config.get("eleven_output_format"):
+        nerfreal.eleven_output_format = _default_config["eleven_output_format"]
+    if _default_config.get("eleven_latency") is not None:
+        nerfreal.eleven_optimize_latency = _default_config["eleven_latency"]
     return nerfreal
+
+async def _fetch_cf_ice_servers():
+    token_id = os.getenv("CF_TURN_TOKEN_ID", "")
+    api_token = os.getenv("CF_TURN_API_TOKEN", "")
+    if not token_id or not api_token:
+        return None
+
+    ttl = int(os.getenv("CF_TURN_TTL", "3600"))
+    now = time.time()
+    if _ice_cache["ice_servers"] and now < _ice_cache["expires_at"] - 30:
+        return _ice_cache["ice_servers"]
+
+    url = f"https://rtc.live.cloudflare.com/v1/turn/keys/{token_id}/credentials/generate-ice-servers"
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
+    }
+    payload = {"ttl": ttl}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers) as response:
+                text = await response.text()
+                if response.status not in (200, 201):
+                    logger.info(f"Cloudflare TURN error {response.status}")
+                    return None
+                data = json.loads(text)
+    except aiohttp.ClientError as e:
+        logger.info(f"Cloudflare TURN request failed: {e}")
+        return None
+
+    ice_servers = data.get("iceServers") or data.get("ice_servers") or data.get("ice")
+    if ice_servers:
+        _ice_cache["ice_servers"] = ice_servers
+        _ice_cache["expires_at"] = now + min(ttl, 24 * 3600)
+    return ice_servers
+
+def _make_rtc_configuration(ice_servers):
+    if not ice_servers:
+        return None
+    servers = []
+    for s in ice_servers:
+        urls = s.get("urls") or s.get("url")
+        if isinstance(urls, str):
+            urls = [urls]
+        servers.append(
+            RTCIceServer(
+                urls=urls,
+                username=s.get("username"),
+                credential=s.get("credential"),
+            )
+        )
+    return RTCConfiguration(iceServers=servers)
 
 #@app.route('/offer', methods=['POST'])
 async def offer(request):
     params = await request.json()
     offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+    quality = params.get("quality", "balanced")
 
     if len(nerfreals) >= opt.max_session:
         logger.info('reach max session')
@@ -94,7 +264,9 @@ async def offer(request):
     nerfreal = await asyncio.get_event_loop().run_in_executor(None, build_nerfreal,sessionid)
     nerfreals[sessionid] = nerfreal
     
-    pc = RTCPeerConnection()
+    ice_servers = await _fetch_cf_ice_servers()
+    rtc_config = _make_rtc_configuration(ice_servers)
+    pc = RTCPeerConnection(configuration=rtc_config) if rtc_config else RTCPeerConnection()
     pcs.add(pc)
 
     @pc.on("connectionstatechange")
@@ -111,6 +283,7 @@ async def offer(request):
     player = HumanPlayer(nerfreals[sessionid])
     audio_sender = pc.addTrack(player.audio)
     video_sender = pc.addTrack(player.video)
+    _apply_video_quality(video_sender, quality)
     capabilities = RTCRtpSender.getCapabilities("video")
     preferences = list(filter(lambda x: x.name == "H264", capabilities.codecs))
     preferences += list(filter(lambda x: x.name == "VP8", capabilities.codecs))
@@ -142,8 +315,13 @@ async def human(request):
     if params['type']=='echo':
         nerfreals[sessionid].put_msg_txt(params['text'])
     elif params['type']=='chat':
-        res=await asyncio.get_event_loop().run_in_executor(None, llm_response, params['text'],nerfreals[sessionid])                         
-        #nerfreals[sessionid].put_msg_txt(res)
+        try:
+            res=await asyncio.get_event_loop().run_in_executor(None, llm_response, params['text'],nerfreals[sessionid])
+            #nerfreals[sessionid].put_msg_txt(res)
+        except Exception as e:
+            # Fallback to echo when no LLM key is configured
+            logger.info(f'LLM error, fallback to echo: {e}')
+            nerfreals[sessionid].put_msg_txt(params['text'])
 
     return web.Response(
         content_type="application/json",
@@ -188,6 +366,66 @@ async def set_audiotype(request):
         ),
     )
 
+async def config(request):
+    params = await request.json()
+    sessionid = params.get('sessionid', 0)
+    nerfreal = nerfreals.get(sessionid)
+    # allow storing defaults before session exists
+    if nerfreal is None and sessionid:
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": "invalid session"}),
+        )
+
+    # LLM settings
+    if 'openai_key' in params:
+        value = (params.get('openai_key') or "").strip()
+        _default_config["openai_key"] = value
+        if nerfreal:
+            nerfreal.openai_api_key = value
+    if 'openai_base' in params:
+        value = (params.get('openai_base') or "").strip()
+        _default_config["openai_base"] = value
+        if nerfreal:
+            nerfreal.openai_base_url = value
+    if 'openai_model' in params:
+        model = (params.get('openai_model') or "").strip()
+        if model:
+            _default_config["openai_model"] = model
+            if nerfreal:
+                nerfreal.openai_model = model
+
+    # ElevenLabs settings
+    if 'eleven_key' in params:
+        value = (params.get('eleven_key') or "").strip()
+        _default_config["eleven_key"] = value
+        if nerfreal:
+            nerfreal.eleven_api_key = value
+    if 'eleven_voice' in params:
+        value = (params.get('eleven_voice') or "").strip()
+        _default_config["eleven_voice"] = value
+        if nerfreal:
+            nerfreal.eleven_voice_id = value
+    if 'eleven_model' in params:
+        model_id = (params.get('eleven_model') or "").strip()
+        if model_id:
+            _default_config["eleven_model"] = model_id
+            if nerfreal:
+                nerfreal.eleven_model_id = model_id
+    if 'eleven_latency' in params:
+        try:
+            value = int(params.get('eleven_latency'))
+            _default_config["eleven_latency"] = value
+            if nerfreal:
+                nerfreal.eleven_optimize_latency = value
+        except Exception:
+            pass
+
+    return web.Response(
+        content_type="application/json",
+        text=json.dumps({"code": 0, "data": "ok"}),
+    )
+
 async def record(request):
     params = await request.json()
 
@@ -215,6 +453,15 @@ async def is_speaking(request):
         ),
     )
 
+async def ice(request):
+    ice_servers = await _fetch_cf_ice_servers()
+    if not ice_servers:
+        ice_servers = []
+    return web.Response(
+        content_type="application/json",
+        text=json.dumps({"iceServers": ice_servers}),
+    )
+
 
 async def on_shutdown(app):
     # close peer connections
@@ -234,7 +481,9 @@ async def run(push_url,sessionid):
     nerfreal = await asyncio.get_event_loop().run_in_executor(None, build_nerfreal,sessionid)
     nerfreals[sessionid] = nerfreal
 
-    pc = RTCPeerConnection()
+    ice_servers = await _fetch_cf_ice_servers()
+    rtc_config = _make_rtc_configuration(ice_servers)
+    pc = RTCPeerConnection(configuration=rtc_config) if rtc_config else RTCPeerConnection()
     pcs.add(pc)
 
     @pc.on("connectionstatechange")
@@ -312,6 +561,8 @@ if __name__ == '__main__':
     parser.add_argument('--init_lips', action='store_true', help="init lips region")
     parser.add_argument('--finetune_lips', action='store_true', help="use LPIPS and landmarks to fine tune lips region")
     parser.add_argument('--smooth_lips', action='store_true', help="smooth the enc_a in a exponential decay way...")
+    parser.add_argument('--lip_smooth', type=float, default=0.35, help="lip smoothing factor (0 = off, 0.35 default)")
+    parser.add_argument('--audio_amp', type=float, default=1.0, help="audio feature amplitude for stronger mouth motion")
 
     parser.add_argument('--torso', action='store_true', help="fix head and train torso")
     parser.add_argument('--head_ckpt', type=str, default='', help="head model")
@@ -351,6 +602,7 @@ if __name__ == '__main__':
     parser.add_argument('--asr_model', type=str, default='cpierse/wav2vec2-large-xlsr-53-esperanto') #
     # parser.add_argument('--asr_model', type=str, default='facebook/wav2vec2-large-960h-lv60-self')
     # parser.add_argument('--asr_model', type=str, default='facebook/hubert-large-ls960-ft')
+    parser.add_argument('--asr_dim', type=int, default=0, help='override ASR feature dim (0 = auto)')
 
     parser.add_argument('--asr_save_feats', action='store_true')
     # audio FPS
@@ -382,6 +634,13 @@ if __name__ == '__main__':
     parser.add_argument('--REF_FILE', type=str, default=None)
     parser.add_argument('--REF_TEXT', type=str, default=None)
     parser.add_argument('--TTS_SERVER', type=str, default='http://127.0.0.1:9880') # http://localhost:9000
+    parser.add_argument('--openai_base', type=str, default='')
+    parser.add_argument('--openai_model', type=str, default='gpt-4o-mini')
+    parser.add_argument('--eleven_voice', type=str, default='')
+    parser.add_argument('--eleven_model', type=str, default='eleven_turbo_v2')
+    parser.add_argument('--eleven_output_format', type=str, default='pcm_16000')
+    parser.add_argument('--eleven_optimize_latency', type=int, default=1)
+    parser.add_argument('--secrets', type=str, default='/workspace/LiveTalking/keys.json', help='path to JSON secrets file')
     # parser.add_argument('--CHARACTER', type=str, default='test')
     # parser.add_argument('--EMOTION', type=str, default='default')
 
@@ -394,6 +653,7 @@ if __name__ == '__main__':
     parser.add_argument('--listenport', type=int, default=8010)
 
     opt = parser.parse_args()
+    _load_secrets(opt.secrets)
     #app.config.from_object(opt)
     #print(app.config)
     opt.customopt = []
@@ -451,8 +711,10 @@ if __name__ == '__main__':
     appasync.router.add_post("/human", human)
     appasync.router.add_post("/humanaudio", humanaudio)
     appasync.router.add_post("/set_audiotype", set_audiotype)
+    appasync.router.add_post("/config", config)
     appasync.router.add_post("/record", record)
     appasync.router.add_post("/is_speaking", is_speaking)
+    appasync.router.add_get("/ice", ice)
     appasync.router.add_static('/',path='web')
 
     # Configure default CORS settings.

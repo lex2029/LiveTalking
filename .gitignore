@@ -10,6 +10,10 @@ trial*/
 data
 data_utils/face_tracking/3DMM/*
 data_utils/face_parsing/79999_iter.pth
+ernerf/data_utils/face_tracking/3DMM/
+ernerf/data_utils/face_parsing/79999_iter.pth
+ernerf/checkpoints.zip
+ernerf/nerf
 
 pretrained
 *.mp4
@@ -19,3 +23,9 @@ workspace/log_ngp.txt
 models/
 *.log
 dist
+logs/
+gateway.log
+keys.json
+turn.env
+temp*.aac
+temp*.mp4

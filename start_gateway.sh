@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source /workspace/LiveTalking/turn.env
+
+# Limit CPU thread sprawl
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+
+# Stop old gateway if running
+pkill -f "/workspace/LiveTalking/gateway.py" || true
+# Stop any orphan workers from previous runs
+pkill -f "/workspace/LiveTalking/app.py" || true
+
+nohup /venv/nerfstream/bin/python /workspace/LiveTalking/gateway.py \
+  --listenport 8090 \
+  --base_port 8091 \
+  --max_workers 5 \
+  --idle_timeout 60 \
+  > /workspace/LiveTalking/gateway.log 2>&1 &
+
+sleep 1
+ss -ltnp | rg ':8090' || true

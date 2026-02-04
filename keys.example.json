@@ -1,0 +1,10 @@
+{
+  "openai_key": "sk-...",
+  "openai_base": "https://api.openai.com/v1",
+  "openai_model": "gpt-4o-mini",
+  "eleven_key": "YOUR_ELEVEN_API_KEY",
+  "eleven_voice": "YOUR_ELEVEN_VOICE_ID",
+  "eleven_model": "eleven_turbo_v2",
+  "eleven_latency": 1,
+  "eleven_output_format": "pcm_16000"
+}

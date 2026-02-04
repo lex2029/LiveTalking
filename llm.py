@@ -6,16 +6,31 @@ from logger import logger
 def llm_response(message,nerfreal:BaseReal):
     start = time.perf_counter()
     from openai import OpenAI
-    client = OpenAI(
-        # 如果您没有配置环境变量，请在此处用您的API Key进行替换
-        api_key=os.getenv("DASHSCOPE_API_KEY"),
-        # 填写DashScope SDK的base_url
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-    )
+    openai_key = getattr(nerfreal, "openai_api_key", "") or os.getenv("OPENAI_API_KEY", "")
+    openai_base = getattr(nerfreal, "openai_base_url", "") or os.getenv("OPENAI_BASE_URL", "")
+    openai_model = getattr(nerfreal, "openai_model", "") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    dashscope_key = os.getenv("DASHSCOPE_API_KEY", "")
+
+    if openai_key:
+        client = OpenAI(
+            api_key=openai_key,
+            base_url=openai_base if openai_base else None,
+        )
+        model_name = openai_model
+    elif dashscope_key:
+        client = OpenAI(
+            # 如果您没有配置环境变量，请在此处用您的API Key进行替换
+            api_key=dashscope_key,
+            # 填写DashScope SDK的base_url
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        )
+        model_name = "qwen-plus"
+    else:
+        raise RuntimeError("No LLM API key configured.")
     end = time.perf_counter()
     logger.info(f"llm Time init: {end-start}s")
     completion = client.chat.completions.create(
-        model="qwen-plus",
+        model=model_name,
         messages=[{'role': 'system', 'content': 'You are a helpful assistant.'},
                   {'role': 'user', 'content': message}],
         stream=True,

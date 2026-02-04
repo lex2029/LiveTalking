@@ -57,9 +57,10 @@ def evaluate(respth='./res/test_res', dspth='./data', cp='model_final_diss.pth')
 
     print(f'[INFO] loading model...')
     n_classes = 19
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     net = BiSeNet(n_classes=n_classes)
-    net.cuda()
-    net.load_state_dict(torch.load(cp))
+    net.load_state_dict(torch.load(cp, map_location=device))
+    net.to(device)
     net.eval()
 
     to_tensor = transforms.Compose([
@@ -72,6 +73,10 @@ def evaluate(respth='./res/test_res', dspth='./data', cp='model_final_diss.pth')
     with torch.no_grad():
         for image_path in tqdm.tqdm(image_paths):
             if image_path.endswith('.jpg') or image_path.endswith('.png'):
+                out_name = str(int(image_path[:-4])) + '.png'
+                out_path = osp.join(respth, out_name)
+                if osp.exists(out_path):
+                    continue
                 img = Image.open(osp.join(dspth, image_path))
                 ori_size = img.size
                 image = img.resize((512, 512), Image.BILINEAR)
@@ -80,13 +85,10 @@ def evaluate(respth='./res/test_res', dspth='./data', cp='model_final_diss.pth')
 
                 # test-time augmentation.
                 inputs = torch.unsqueeze(img, 0) # [1, 3, 512, 512]
-                outputs = net(inputs.cuda())
+                outputs = net(inputs.to(device))
                 parsing = outputs.mean(0).cpu().numpy().argmax(0)
 
-                image_path = int(image_path[:-4])
-                image_path = str(image_path) + '.png'
-
-                vis_parsing_maps(image, parsing, stride=1, save_im=True, save_path=osp.join(respth, image_path), img_size=ori_size)
+                vis_parsing_maps(image, parsing, stride=1, save_im=True, save_path=out_path, img_size=ori_size)
 
 
 if __name__ == "__main__":
