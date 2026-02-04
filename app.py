@@ -93,6 +93,9 @@ def _apply_video_quality(sender: RTCRtpSender, quality: str) -> None:
     profile = QUALITY_PROFILES.get((quality or "").lower())
     if not profile:
         return
+    if not hasattr(sender, "getParameters") or not hasattr(sender, "setParameters"):
+        # Older aiortc versions don't support sender parameters; skip.
+        return
     params = sender.getParameters()
     if not params.encodings:
         params.encodings = [RTCRtpEncodingParameters()]
@@ -257,7 +260,11 @@ async def offer(request):
 
     if len(nerfreals) >= opt.max_session:
         logger.info('reach max session')
-        return -1
+        return web.Response(
+            content_type="application/json",
+            status=429,
+            text=json.dumps({"code": -1, "msg": "reach max session"}),
+        )
     sessionid = randN(6) #len(nerfreals)
     logger.info('sessionid=%d',sessionid)
     nerfreals[sessionid] = None

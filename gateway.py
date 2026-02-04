@@ -216,12 +216,25 @@ async def offer(request: web.Request) -> web.Response:
 
     worker = await manager.start_worker()
     if not worker:
-        return web.Response(status=503, text="No available worker")
+        return web.Response(
+            status=503,
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": "No available worker"}),
+        )
 
     url = f"http://127.0.0.1:{worker.port}/offer"
     async with manager.client.post(url, json=params) as resp:
-        data = await resp.json()
-        if resp.status == 200 and isinstance(data, dict) and "sessionid" in data:
+        body_text = await resp.text()
+        try:
+            data = json.loads(body_text)
+        except Exception:
+            return web.Response(
+                status=502,
+                content_type="application/json",
+                text=json.dumps({"code": -1, "msg": "Invalid worker response", "detail": body_text[:200]}),
+            )
+
+        if resp.status == 200 and isinstance(data, dict) and data.get("code", 0) == 0 and "sessionid" in data:
             sessionid = int(data["sessionid"])
             manager.map_session(sessionid, worker)
         return web.Response(
@@ -352,6 +365,15 @@ async def on_shutdown(app: web.Application) -> None:
     await manager.close()
 
 
+@web.middleware
+async def no_cache_middleware(request, handler):
+    resp = await handler(request)
+    path = request.path.lower()
+    if path.endswith(".html") or path.endswith(".js"):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 def _load_args_file(path: str) -> List[str]:
     if not path:
         return []
@@ -387,6 +409,7 @@ def main() -> None:
     )
 
     app = web.Application()
+    app.middlewares.append(no_cache_middleware)
     app["manager"] = manager
 
     # Routes

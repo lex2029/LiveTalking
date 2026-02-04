@@ -1,4 +1,6 @@
 var pc = null;
+var remoteStream = null;
+var playoutStatsTimer = null;
 
 function getQualityPreference() {
     if (typeof window.getQualityPreference === 'function') {
@@ -12,6 +14,56 @@ function getPlayoutDelaySeconds() {
         return window.getPlayoutDelaySeconds();
     }
     return 0;
+}
+
+function getPlayoutDelayMode() {
+    if (typeof window.getPlayoutDelayMode === 'function') {
+        return window.getPlayoutDelayMode();
+    }
+    return 'fixed';
+}
+
+function applyPlayoutDelayHint(valueSeconds) {
+    if (!pc) return;
+    pc.getReceivers().forEach((receiver) => {
+        if (receiver && typeof receiver.playoutDelayHint !== 'undefined') {
+            receiver.playoutDelayHint = valueSeconds;
+        }
+    });
+}
+
+function startAutoPlayoutDelay() {
+    if (!pc) return;
+    if (playoutStatsTimer) clearInterval(playoutStatsTimer);
+    playoutStatsTimer = setInterval(async () => {
+        if (!pc) return;
+        try {
+            const stats = await pc.getStats();
+            let audioReport = null;
+            stats.forEach((report) => {
+                if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+                    audioReport = report;
+                }
+            });
+            if (!audioReport) return;
+            let avg = 0.0;
+            if (audioReport.jitterBufferDelay && audioReport.jitterBufferEmittedCount) {
+                avg = audioReport.jitterBufferDelay / audioReport.jitterBufferEmittedCount;
+            }
+            const jitter = audioReport.jitter || 0.0;
+            const target = Math.min(0.4, Math.max(0.05, (jitter > 0 ? jitter * 2.0 : avg || 0.2)));
+            applyPlayoutDelayHint(target);
+        } catch (e) {
+            // ignore
+        }
+    }, 3000);
+}
+
+function stopAutoPlayoutDelay() {
+    if (playoutStatsTimer) {
+        clearInterval(playoutStatsTimer);
+        playoutStatsTimer = null;
+    }
 }
 
 async function fetchIceServers() {
@@ -61,10 +113,21 @@ function negotiate() {
             },
             method: 'POST'
         });
-    }).then((response) => {
-        return response.json();
-    }).then((answer) => {
-        document.getElementById('sessionid').value = answer.sessionid
+    }).then(async (response) => {
+        const text = await response.text();
+        if (!response.ok) {
+            throw new Error(text || `HTTP ${response.status}`);
+        }
+        let answer = null;
+        try {
+            answer = JSON.parse(text);
+        } catch (e) {
+            throw new Error(`Invalid JSON from /offer: ${text.slice(0, 200)}`);
+        }
+        if (answer && typeof answer === 'object' && answer.code < 0) {
+            throw new Error(answer.msg || 'Offer failed');
+        }
+        document.getElementById('sessionid').value = answer.sessionid || 0;
         if (typeof window.onSessionReady === 'function') {
             window.onSessionReady(answer.sessionid);
         }
@@ -88,17 +151,22 @@ async function start() {
     }
 
     pc = new RTCPeerConnection(config);
+    remoteStream = new MediaStream();
+    document.getElementById('video').srcObject = remoteStream;
 
     // connect audio / video
     pc.addEventListener('track', (evt) => {
-        const delay = getPlayoutDelaySeconds();
-        if (evt.receiver && typeof evt.receiver.playoutDelayHint !== 'undefined') {
-            evt.receiver.playoutDelayHint = delay;
+        if (remoteStream) {
+            remoteStream.addTrack(evt.track);
         }
-        if (evt.track.kind == 'video') {
-            document.getElementById('video').srcObject = evt.streams[0];
+        const mode = getPlayoutDelayMode();
+        if (mode === 'auto') {
+            startAutoPlayoutDelay();
         } else {
-            document.getElementById('audio').srcObject = evt.streams[0];
+            const delay = getPlayoutDelaySeconds();
+            if (evt.receiver && typeof evt.receiver.playoutDelayHint !== 'undefined') {
+                evt.receiver.playoutDelayHint = delay;
+            }
         }
     });
     pc.addEventListener('connectionstatechange', () => {
@@ -127,6 +195,7 @@ function stop() {
         if (pc) {
             pc.close();
             pc = null;
+            stopAutoPlayoutDelay();
             if (typeof window.onWebRTCDisconnected === 'function') {
                 window.onWebRTCDisconnected();
             }
