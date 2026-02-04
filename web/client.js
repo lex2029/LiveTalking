@@ -139,14 +139,22 @@ function negotiate() {
 
 async function start() {
     var config = {
-        sdpSemantics: 'unified-plan'
+        sdpSemantics: 'unified-plan',
+        bundlePolicy: 'max-bundle',
+        iceCandidatePoolSize: 2
     };
 
     const iceServers = await fetchIceServers();
     if (iceServers.length > 0) {
         config.iceServers = iceServers;
-        config.iceTransportPolicy = 'relay';
-    } else if (document.getElementById('use-stun').checked) {
+        // If user forces TURN-only, use relay, otherwise allow direct for faster connect.
+        if (document.getElementById('use-stun').checked) {
+            config.iceTransportPolicy = 'relay';
+        } else {
+            config.iceTransportPolicy = 'all';
+        }
+    } else {
+        // Fallback to Google STUN if TURN is unavailable.
         config.iceServers = [{ urls: ['stun:stun.l.google.com:19302'] }];
     }
 
