@@ -98,11 +98,12 @@ class WorkerManager:
                 # Remove crashed workers.
                 if worker.process.poll() is not None:
                     await self.stop_worker(worker, reason="crash")
+                    await self.start_worker_at(worker.port)
                     continue
                 # Idle timeout based on last message activity.
                 if worker.sessionid is not None:
                     if now - worker.last_activity >= self.idle_timeout:
-                        await self.stop_worker(worker, reason="idle")
+                        await self.end_session(worker, reason="idle")
             await asyncio.sleep(5)
 
     async def wait_ready(self, port: int) -> bool:
@@ -119,45 +120,53 @@ class WorkerManager:
                 await asyncio.sleep(0.3)
         return False
 
-    async def start_worker(self) -> Optional[Worker]:
+    async def start_worker_at(self, port: int) -> Optional[Worker]:
+        existing = self.workers_by_port.get(port)
+        if existing and existing.process.poll() is None:
+            return existing
+        if existing:
+            await self.stop_worker(existing, reason="restart")
+
+        log_path = self.log_dir / f"worker-{port}.log"
+        log_fp = open(log_path, "ab")
+        cmd = [sys.executable, APP_PY] + self.base_args + [
+            "--listenport",
+            str(port),
+            "--max_session",
+            "1",
+        ]
+        proc = subprocess.Popen(
+            cmd,
+            stdout=log_fp,
+            stderr=log_fp,
+            env=self.env,
+            cwd=str(BASE_DIR),
+        )
+        worker = Worker(
+            port=port,
+            process=proc,
+            started_at=time.time(),
+            last_activity=time.time(),
+            log_path=log_path,
+        )
+        worker.log_fp = log_fp
+        self.workers_by_port[port] = worker
+        print(f"[gateway] starting worker on port {port} (pid={proc.pid})", flush=True)
+
+        ready = await self.wait_ready(port)
+        if not ready or proc.poll() is not None:
+            await self.stop_worker(worker, reason="startup-failed")
+            return None
+        return worker
+
+    async def start_all_workers(self) -> None:
         for port in self.ports:
-            existing = self.workers_by_port.get(port)
-            if existing and existing.process.poll() is None:
-                continue
-            if existing:
-                await self.stop_worker(existing, reason="restart")
+            await self.start_worker_at(port)
 
-            log_path = self.log_dir / f"worker-{port}.log"
-            log_fp = open(log_path, "ab")
-            cmd = [sys.executable, APP_PY] + self.base_args + [
-                "--listenport",
-                str(port),
-                "--max_session",
-                "1",
-            ]
-            proc = subprocess.Popen(
-                cmd,
-                stdout=log_fp,
-                stderr=log_fp,
-                env=self.env,
-                cwd=str(BASE_DIR),
-            )
-            worker = Worker(
-                port=port,
-                process=proc,
-                started_at=time.time(),
-                last_activity=time.time(),
-                log_path=log_path,
-            )
-            worker.log_fp = log_fp
-            self.workers_by_port[port] = worker
-            print(f"[gateway] starting worker on port {port} (pid={proc.pid})", flush=True)
-
-            ready = await self.wait_ready(port)
-            if not ready or proc.poll() is not None:
-                await self.stop_worker(worker, reason="startup-failed")
-                continue
-            return worker
+    def get_free_worker(self) -> Optional[Worker]:
+        for worker in self.workers_by_port.values():
+            if worker.process.poll() is None and worker.sessionid is None:
+                return worker
         return None
 
     def map_session(self, sessionid: int, worker: Worker) -> None:
@@ -166,11 +175,31 @@ class WorkerManager:
         self.session_map[sessionid] = worker
         print(f"[gateway] session {sessionid} mapped to port {worker.port}", flush=True)
 
+    def release_worker(self, worker: Worker) -> None:
+        if worker.sessionid in self.session_map:
+            del self.session_map[worker.sessionid]
+        worker.sessionid = None
+        worker.last_activity = time.time()
+
     def get_worker_for_session(self, sessionid: int) -> Optional[Worker]:
         return self.session_map.get(sessionid)
 
     def touch(self, worker: Worker) -> None:
         worker.last_activity = time.time()
+
+    async def end_session(self, worker: Worker, reason: str = "idle") -> None:
+        if not self.client:
+            self.release_worker(worker)
+            return
+        sessionid = worker.sessionid
+        if not sessionid:
+            return
+        try:
+            url = f"http://127.0.0.1:{worker.port}/end_session"
+            await self.client.post(url, json={"sessionid": sessionid})
+        except Exception:
+            pass
+        self.release_worker(worker)
 
 
 async def _fetch_cf_ice_servers() -> Optional[list]:
@@ -214,7 +243,7 @@ async def offer(request: web.Request) -> web.Response:
     manager: WorkerManager = request.app["manager"]
     params = await request.json()
 
-    worker = await manager.start_worker()
+    worker = manager.get_free_worker()
     if not worker:
         return web.Response(
             status=503,
@@ -352,10 +381,16 @@ async def is_speaking(request: web.Request) -> web.Response:
 async def on_startup(app: web.Application) -> None:
     manager: WorkerManager = app["manager"]
     await manager.start()
+    app["warm_task"] = asyncio.create_task(manager.start_all_workers())
     app["cleanup_task"] = asyncio.create_task(manager.cleanup_loop())
 
 
 async def on_shutdown(app: web.Application) -> None:
+    warm_task = app.get("warm_task")
+    if warm_task:
+        warm_task.cancel()
+        with contextlib.suppress(Exception):
+            await warm_task
     cleanup_task = app.get("cleanup_task")
     if cleanup_task:
         cleanup_task.cancel()
@@ -363,6 +398,24 @@ async def on_shutdown(app: web.Application) -> None:
             await cleanup_task
     manager: WorkerManager = app["manager"]
     await manager.close()
+
+
+async def end_session(request: web.Request) -> web.Response:
+    manager: WorkerManager = request.app["manager"]
+    params = await request.json()
+    sessionid = int(params.get("sessionid", 0))
+    worker = manager.get_worker_for_session(sessionid)
+    if not worker:
+        return web.Response(
+            status=410,
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": "Session expired"}),
+        )
+    await manager.end_session(worker, reason="client")
+    return web.Response(
+        content_type="application/json",
+        text=json.dumps({"code": 0, "msg": "ended"}),
+    )
 
 
 @web.middleware
@@ -421,6 +474,7 @@ def main() -> None:
     app.router.add_post("/config", config)
     app.router.add_post("/record", record)
     app.router.add_post("/is_speaking", is_speaking)
+    app.router.add_post("/end_session", end_session)
     app.router.add_static("/", path=str(BASE_DIR / "web"), show_index=True)
 
     cors = aiohttp_cors.setup(app, defaults={

@@ -159,6 +159,7 @@ def _load_secrets(path: str):
 
 #####webrtc###############################
 pcs = set()
+pcs_by_session: Dict[int, RTCPeerConnection] = {}
 
 def randN(N)->int:
     '''生成长度为 N的随机数 '''
@@ -275,6 +276,7 @@ async def offer(request):
     rtc_config = _make_rtc_configuration(ice_servers)
     pc = RTCPeerConnection(configuration=rtc_config) if rtc_config else RTCPeerConnection()
     pcs.add(pc)
+    pcs_by_session[sessionid] = pc
 
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
@@ -282,10 +284,14 @@ async def offer(request):
         if pc.connectionState == "failed":
             await pc.close()
             pcs.discard(pc)
-            del nerfreals[sessionid]
+            pcs_by_session.pop(sessionid, None)
+            if sessionid in nerfreals:
+                del nerfreals[sessionid]
         if pc.connectionState == "closed":
             pcs.discard(pc)
-            del nerfreals[sessionid]
+            pcs_by_session.pop(sessionid, None)
+            if sessionid in nerfreals:
+                del nerfreals[sessionid]
 
     player = HumanPlayer(nerfreals[sessionid])
     audio_sender = pc.addTrack(player.audio)
@@ -460,6 +466,30 @@ async def is_speaking(request):
         ),
     )
 
+
+async def end_session(request):
+    params = await request.json()
+    sessionid = int(params.get('sessionid', 0))
+    if sessionid:
+        pc = pcs_by_session.pop(sessionid, None)
+        if pc:
+            try:
+                await pc.close()
+            except Exception:
+                pass
+            pcs.discard(pc)
+        nerfreal = nerfreals.get(sessionid)
+        if nerfreal:
+            try:
+                nerfreal.flush_talk()
+            except Exception:
+                pass
+            del nerfreals[sessionid]
+    return web.Response(
+        content_type="application/json",
+        text=json.dumps({"code": 0, "msg": "ended"}),
+    )
+
 async def ice(request):
     ice_servers = await _fetch_cf_ice_servers()
     if not ice_servers:
@@ -475,6 +505,7 @@ async def on_shutdown(app):
     coros = [pc.close() for pc in pcs]
     await asyncio.gather(*coros)
     pcs.clear()
+    pcs_by_session.clear()
 
 async def post(url,data):
     try:
@@ -721,6 +752,7 @@ if __name__ == '__main__':
     appasync.router.add_post("/config", config)
     appasync.router.add_post("/record", record)
     appasync.router.add_post("/is_speaking", is_speaking)
+    appasync.router.add_post("/end_session", end_session)
     appasync.router.add_get("/ice", ice)
     appasync.router.add_static('/',path='web')
 

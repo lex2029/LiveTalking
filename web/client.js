@@ -193,6 +193,14 @@ function stop() {
     // close peer connection
     setTimeout(() => {
         if (pc) {
+            const sid = parseInt(document.getElementById('sessionid').value || '0', 10);
+            if (sid) {
+                fetch('/end_session', {
+                    body: JSON.stringify({ sessionid: sid }),
+                    headers: { 'Content-Type': 'application/json' },
+                    method: 'POST'
+                }).catch(() => {});
+            }
             pc.close();
             pc = null;
             stopAutoPlayoutDelay();
@@ -205,14 +213,28 @@ function stop() {
 
 window.onunload = function(event) {
     // 在这里执行你想要的操作
+    try {
+        const sid = parseInt(document.getElementById('sessionid').value || '0', 10);
+        if (sid && navigator.sendBeacon) {
+            const blob = new Blob([JSON.stringify({ sessionid: sid })], { type: 'application/json' });
+            navigator.sendBeacon('/end_session', blob);
+        }
+    } catch (e) {}
     setTimeout(() => {
-        pc.close();
+        if (pc) pc.close();
     }, 500);
 };
 
 window.onbeforeunload = function (e) {
+        try {
+            const sid = parseInt(document.getElementById('sessionid').value || '0', 10);
+            if (sid && navigator.sendBeacon) {
+                const blob = new Blob([JSON.stringify({ sessionid: sid })], { type: 'application/json' });
+                navigator.sendBeacon('/end_session', blob);
+            }
+        } catch (e) {}
         setTimeout(() => {
-                pc.close();
+                if (pc) pc.close();
             }, 500);
         e = e || window.event
         // 兼容IE8和Firefox 4之前的版本
