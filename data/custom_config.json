@@ -1,7 +1,9 @@
 [
-   {
-        "audiotype":2, 
-        "imgpath":"data/customvideo/image", 
-        "audiopath":"data/customvideo/audio.wav"
-    }
+  {
+    "audiotype": 2,
+    "imgpath": "data/customvideo/idle/img",
+    "audiopath": "data/customvideo/idle/audio.wav",
+    "loop": true,
+    "auto_idle": true
+  }
 ]

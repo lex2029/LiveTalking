@@ -82,7 +82,11 @@ class PlayerStreamTrack(MediaStreamTrack):
                 #     self.timelist.pop(0)
                 # self.timelist.append(time.time())
             else:
-                self._start = time.time()
+                shared_start = getattr(self._player, "_start_time", None)
+                if shared_start is None:
+                    shared_start = time.time()
+                    self._player._start_time = shared_start
+                self._start = shared_start
                 self._timestamp = 0
                 self.timelist.append(self._start)
                 mylogger.info('video start:%f',self._start)
@@ -101,7 +105,11 @@ class PlayerStreamTrack(MediaStreamTrack):
                 #     self.timelist.pop(0)
                 # self.timelist.append(time.time())
             else:
-                self._start = time.time()
+                shared_start = getattr(self._player, "_start_time", None)
+                if shared_start is None:
+                    shared_start = time.time()
+                    self._player._start_time = shared_start
+                self._start = shared_start
                 self._timestamp = 0
                 self.timelist.append(self._start)
                 mylogger.info('audio start:%f',self._start)
@@ -177,6 +185,7 @@ class HumanPlayer:
         self.__video = PlayerStreamTrack(self, kind="video")
 
         self.__container = nerfreal
+        self._start_time = None
 
     def notify(self,eventpoint):
         self.__container.notify(eventpoint)
@@ -221,6 +230,7 @@ class HumanPlayer:
             self.__thread_quit.set()
             self.__thread.join()
             self.__thread = None
+            self._start_time = None
 
         if not self.__started and self.__container is not None:
             #self.__container.close()

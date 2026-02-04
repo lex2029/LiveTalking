@@ -1,0 +1,19 @@
+{
+  "default": "head",
+  "profiles": {
+    "head": {
+      "label": "Только голова (быстро)",
+      "worker_args_file": "worker_args_head.json",
+      "base_port": 8091,
+      "max_workers": 5,
+      "ready_check": "ernerf/obama_eo_head/checkpoints/ngp.pth"
+    },
+    "torso": {
+      "label": "Голова + торс (макс. качество)",
+      "worker_args_file": "worker_args_torso.json",
+      "base_port": 8101,
+      "max_workers": 1,
+      "ready_check": "ernerf/obama_eo_torso/checkpoints/ngp_ep0028.pth"
+    }
+  }
+}

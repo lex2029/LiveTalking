@@ -6,5 +6,6 @@
   "eleven_voice": "YOUR_ELEVEN_VOICE_ID",
   "eleven_model": "eleven_turbo_v2",
   "eleven_latency": 1,
-  "eleven_output_format": "pcm_16000"
+  "eleven_output_format": "pcm_16000",
+  "eleven_speed": 0.75
 }

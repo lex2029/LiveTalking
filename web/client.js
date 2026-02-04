@@ -1,12 +1,21 @@
 var pc = null;
 var remoteStream = null;
 var playoutStatsTimer = null;
+var qualityAutoTimer = null;
+var currentAutoQuality = null;
 
 function getQualityPreference() {
     if (typeof window.getQualityPreference === 'function') {
         return window.getQualityPreference();
     }
     return 'balanced';
+}
+
+function getProfilePreference() {
+    if (typeof window.getProfilePreference === 'function') {
+        return window.getProfilePreference();
+    }
+    return 'head';
 }
 
 function getPlayoutDelaySeconds() {
@@ -23,12 +32,16 @@ function getPlayoutDelayMode() {
     return 'fixed';
 }
 
-function applyPlayoutDelayHint(valueSeconds) {
+function applyPlayoutDelayHint(valueSeconds, kind) {
     if (!pc) return;
     pc.getReceivers().forEach((receiver) => {
-        if (receiver && typeof receiver.playoutDelayHint !== 'undefined') {
-            receiver.playoutDelayHint = valueSeconds;
+        if (!receiver || typeof receiver.playoutDelayHint === 'undefined') {
+            return;
         }
+        if (kind && receiver.track && receiver.track.kind !== kind) {
+            return;
+        }
+        receiver.playoutDelayHint = valueSeconds;
     });
 }
 
@@ -51,8 +64,16 @@ function startAutoPlayoutDelay() {
                 avg = audioReport.jitterBufferDelay / audioReport.jitterBufferEmittedCount;
             }
             const jitter = audioReport.jitter || 0.0;
-            const target = Math.min(0.4, Math.max(0.05, (jitter > 0 ? jitter * 2.0 : avg || 0.2)));
-            applyPlayoutDelayHint(target);
+            const lossRate = audioReport.packetsLost && audioReport.packetsReceived
+                ? Math.min(1.0, audioReport.packetsLost / Math.max(1, audioReport.packetsLost + audioReport.packetsReceived))
+                : 0.0;
+            let target = (jitter > 0 ? jitter * 2.5 : avg || 0.2);
+            if (lossRate > 0.02) target += 0.15;
+            if (lossRate > 0.05) target += 0.2;
+            target = Math.min(1.0, Math.max(0.1, target));
+            // Apply same playout delay for audio+video to keep sync under jitter.
+            applyPlayoutDelayHint(target, 'audio');
+            applyPlayoutDelayHint(target, 'video');
         } catch (e) {
             // ignore
         }
@@ -64,6 +85,113 @@ function stopAutoPlayoutDelay() {
         clearInterval(playoutStatsTimer);
         playoutStatsTimer = null;
     }
+}
+
+function applyPlayoutDelayNowInternal() {
+    if (!pc) return;
+    const mode = getPlayoutDelayMode();
+    if (mode === 'auto') {
+        startAutoPlayoutDelay();
+        return;
+    }
+    stopAutoPlayoutDelay();
+    const delay = getPlayoutDelaySeconds();
+    applyPlayoutDelayHint(delay, 'audio');
+    applyPlayoutDelayHint(delay, 'video');
+}
+
+function applyQualityNowInternal(quality) {
+    if (!pc) return;
+    const sid = parseInt(document.getElementById('sessionid').value || '0', 10);
+    if (!sid) return;
+    fetch('/webrtc_quality', {
+        body: JSON.stringify({
+            sessionid: sid,
+            quality: quality
+        }),
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        method: 'POST'
+    }).catch(() => {});
+}
+
+function decideAutoQuality(stats) {
+    let rtt = 0.0;
+    let lossRate = 0.0;
+    let jitter = 0.0;
+    let drops = 0.0;
+    let available = 0.0;
+    stats.forEach((report) => {
+        if (report.type === 'candidate-pair' && report.state === 'succeeded' && (report.nominated || report.selected)) {
+            if (typeof report.currentRoundTripTime === 'number') rtt = report.currentRoundTripTime;
+            if (typeof report.availableIncomingBitrate === 'number') available = report.availableIncomingBitrate;
+        }
+        if (report.type === 'inbound-rtp' && report.kind === 'video') {
+            if (typeof report.jitter === 'number') jitter = report.jitter;
+            if (typeof report.packetsLost === 'number' && typeof report.packetsReceived === 'number') {
+                lossRate = report.packetsLost / Math.max(1, report.packetsLost + report.packetsReceived);
+            }
+            if (typeof report.framesDropped === 'number' && typeof report.framesReceived === 'number') {
+                drops = report.framesDropped / Math.max(1, report.framesReceived);
+            }
+        }
+    });
+
+    let qByBitrate = 'high';
+    if (available > 0) {
+        if (available < 200000) qByBitrate = 'emergency';
+        else if (available < 350000) qByBitrate = 'very_low';
+        else if (available < 700000) qByBitrate = 'low';
+        else if (available < 1200000) qByBitrate = 'balanced';
+    }
+
+    let qByMetrics = 'high';
+    if (lossRate > 0.15 || rtt > 0.7 || jitter > 0.12 || drops > 0.25) qByMetrics = 'emergency';
+    else if (lossRate > 0.08 || rtt > 0.45 || jitter > 0.08 || drops > 0.12) qByMetrics = 'very_low';
+    else if (lossRate > 0.04 || rtt > 0.30 || jitter > 0.05 || drops > 0.08) qByMetrics = 'low';
+    else if (lossRate > 0.02 || rtt > 0.22 || jitter > 0.03 || drops > 0.04) qByMetrics = 'balanced';
+
+    const order = ['emergency', 'very_low', 'low', 'balanced', 'high'];
+    const byBitrateIndex = order.indexOf(qByBitrate);
+    const byMetricsIndex = order.indexOf(qByMetrics);
+    return order[Math.min(byBitrateIndex, byMetricsIndex)];
+}
+
+function startAutoQuality() {
+    if (!pc) return;
+    if (qualityAutoTimer) return;
+    currentAutoQuality = null;
+    qualityAutoTimer = setInterval(async () => {
+        if (!pc) return;
+        try {
+            const stats = await pc.getStats();
+            const quality = decideAutoQuality(stats);
+            if (quality && quality !== currentAutoQuality) {
+                currentAutoQuality = quality;
+                applyQualityNowInternal(quality);
+            }
+        } catch (e) {
+            // ignore
+        }
+    }, 3000);
+}
+
+function stopAutoQuality() {
+    if (qualityAutoTimer) {
+        clearInterval(qualityAutoTimer);
+        qualityAutoTimer = null;
+    }
+}
+
+function applyQualityForSelection() {
+    const quality = getQualityPreference();
+    if (quality === 'auto') {
+        startAutoQuality();
+        return;
+    }
+    stopAutoQuality();
+    applyQualityNowInternal(quality);
 }
 
 async function fetchIceServers() {
@@ -102,11 +230,13 @@ function negotiate() {
     }).then(() => {
         var offer = pc.localDescription;
         var quality = getQualityPreference();
+        var profile = getProfilePreference();
         return fetch('/offer', {
             body: JSON.stringify({
                 sdp: offer.sdp,
                 type: offer.type,
                 quality: quality,
+                profile: profile,
             }),
             headers: {
                 'Content-Type': 'application/json'
@@ -131,6 +261,7 @@ function negotiate() {
         if (typeof window.onSessionReady === 'function') {
             window.onSessionReady(answer.sessionid);
         }
+        applyQualityForSelection();
         return pc.setRemoteDescription(answer);
     }).catch((e) => {
         alert(e);
@@ -167,15 +298,7 @@ async function start() {
         if (remoteStream) {
             remoteStream.addTrack(evt.track);
         }
-        const mode = getPlayoutDelayMode();
-        if (mode === 'auto') {
-            startAutoPlayoutDelay();
-        } else {
-            const delay = getPlayoutDelaySeconds();
-            if (evt.receiver && typeof evt.receiver.playoutDelayHint !== 'undefined') {
-                evt.receiver.playoutDelayHint = delay;
-            }
-        }
+        applyPlayoutDelayNowInternal();
     });
     pc.addEventListener('connectionstatechange', () => {
         if (!pc) return;
@@ -212,12 +335,21 @@ function stop() {
             pc.close();
             pc = null;
             stopAutoPlayoutDelay();
+            stopAutoQuality();
             if (typeof window.onWebRTCDisconnected === 'function') {
                 window.onWebRTCDisconnected();
             }
         }
     }, 500);
 }
+
+window.applyQualityNow = function() {
+    applyQualityForSelection();
+};
+
+window.applyPlayoutDelayNow = function() {
+    applyPlayoutDelayNowInternal();
+};
 
 window.onunload = function(event) {
     // 在这里执行你想要的操作

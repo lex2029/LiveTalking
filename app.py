@@ -67,10 +67,21 @@ _default_config = {
     "eleven_model": "",
     "eleven_latency": None,
     "eleven_output_format": "",
+    "eleven_speed": None,
 }
 
 # WebRTC quality presets (bitrate in bps).
 QUALITY_PROFILES = {
+    "emergency": {
+        "max_bitrate": 80_000,
+        "max_fps": 8,
+        "scale": 3.0,
+    },
+    "very_low": {
+        "max_bitrate": 150_000,
+        "max_fps": 10,
+        "scale": 2.5,
+    },
     "low": {
         "max_bitrate": 350_000,
         "max_fps": 15,
@@ -108,6 +119,22 @@ def _apply_video_quality(sender: RTCRtpSender, quality: str) -> None:
         enc.scaleResolutionDownBy = float(profile["scale"])
     sender.setParameters(params)
 
+
+def _apply_video_overrides(sender: RTCRtpSender, overrides: dict) -> None:
+    if not hasattr(sender, "getParameters") or not hasattr(sender, "setParameters"):
+        return
+    params = sender.getParameters()
+    if not params.encodings:
+        params.encodings = [RTCRtpEncodingParameters()]
+    enc = params.encodings[0]
+    if overrides.get("max_bitrate") is not None:
+        enc.maxBitrate = int(overrides["max_bitrate"])
+    if overrides.get("max_fps") is not None:
+        enc.maxFramerate = int(overrides["max_fps"])
+    if overrides.get("scale") is not None:
+        enc.scaleResolutionDownBy = float(overrides["scale"])
+    sender.setParameters(params)
+
 def _load_secrets(path: str):
     if not path:
         return
@@ -135,6 +162,7 @@ def _load_secrets(path: str):
     eleven_model = _pick("eleven_model", "eleven_model_id", "ELEVEN_MODEL_ID")
     eleven_latency = data.get("eleven_latency", data.get("eleven_optimize_latency"))
     eleven_output_format = _pick("eleven_output_format", "ELEVEN_OUTPUT_FORMAT")
+    eleven_speed = data.get("eleven_speed", data.get("eleven_voice_speed"))
 
     if openai_key:
         _default_config["openai_key"] = openai_key
@@ -155,11 +183,17 @@ def _load_secrets(path: str):
             _default_config["eleven_latency"] = int(eleven_latency)
         except Exception:
             pass
+    if eleven_speed is not None:
+        try:
+            _default_config["eleven_speed"] = float(eleven_speed)
+        except Exception:
+            pass
         
 
 #####webrtc###############################
 pcs = set()
 pcs_by_session: Dict[int, RTCPeerConnection] = {}
+video_senders_by_session: Dict[int, RTCRtpSender] = {}
 
 def randN(N)->int:
     '''生成长度为 N的随机数 '''
@@ -198,6 +232,8 @@ def build_nerfreal(sessionid:int)->BaseReal:
         nerfreal.eleven_output_format = _default_config["eleven_output_format"]
     if _default_config.get("eleven_latency") is not None:
         nerfreal.eleven_optimize_latency = _default_config["eleven_latency"]
+    if _default_config.get("eleven_speed") is not None:
+        nerfreal.eleven_speed = _default_config["eleven_speed"]
     return nerfreal
 
 async def _fetch_cf_ice_servers():
@@ -285,11 +321,13 @@ async def offer(request):
             await pc.close()
             pcs.discard(pc)
             pcs_by_session.pop(sessionid, None)
+            video_senders_by_session.pop(sessionid, None)
             if sessionid in nerfreals:
                 del nerfreals[sessionid]
         if pc.connectionState == "closed":
             pcs.discard(pc)
             pcs_by_session.pop(sessionid, None)
+            video_senders_by_session.pop(sessionid, None)
             if sessionid in nerfreals:
                 del nerfreals[sessionid]
 
@@ -297,6 +335,7 @@ async def offer(request):
     audio_sender = pc.addTrack(player.audio)
     video_sender = pc.addTrack(player.video)
     _apply_video_quality(video_sender, quality)
+    video_senders_by_session[sessionid] = video_sender
     capabilities = RTCRtpSender.getCapabilities("video")
     preferences = list(filter(lambda x: x.name == "H264", capabilities.codecs))
     preferences += list(filter(lambda x: x.name == "VP8", capabilities.codecs))
@@ -433,6 +472,54 @@ async def config(request):
                 nerfreal.eleven_optimize_latency = value
         except Exception:
             pass
+    if 'eleven_speed' in params:
+        try:
+            value = float(params.get('eleven_speed'))
+            _default_config["eleven_speed"] = value
+            if nerfreal:
+                nerfreal.eleven_speed = value
+        except Exception:
+            pass
+
+    return web.Response(
+        content_type="application/json",
+        text=json.dumps({"code": 0, "data": "ok"}),
+    )
+
+
+async def webrtc_quality(request):
+    params = await request.json()
+    sessionid = int(params.get('sessionid', 0))
+    sender = video_senders_by_session.get(sessionid)
+    if not sender:
+        return web.Response(
+            content_type="application/json",
+            status=410,
+            text=json.dumps({"code": -1, "msg": "session expired"}),
+        )
+
+    quality = params.get("quality")
+    if quality:
+        _apply_video_quality(sender, quality)
+    else:
+        overrides = {}
+        if params.get("max_bitrate") is not None:
+            try:
+                overrides["max_bitrate"] = int(params.get("max_bitrate"))
+            except Exception:
+                pass
+        if params.get("max_fps") is not None:
+            try:
+                overrides["max_fps"] = int(params.get("max_fps"))
+            except Exception:
+                pass
+        if params.get("scale") is not None:
+            try:
+                overrides["scale"] = float(params.get("scale"))
+            except Exception:
+                pass
+        if overrides:
+            _apply_video_overrides(sender, overrides)
 
     return web.Response(
         content_type="application/json",
@@ -478,6 +565,7 @@ async def end_session(request):
             except Exception:
                 pass
             pcs.discard(pc)
+        video_senders_by_session.pop(sessionid, None)
         nerfreal = nerfreals.get(sessionid)
         if nerfreal:
             try:
@@ -506,6 +594,7 @@ async def on_shutdown(app):
     await asyncio.gather(*coros)
     pcs.clear()
     pcs_by_session.clear()
+    video_senders_by_session.clear()
 
 async def post(url,data):
     try:
@@ -678,6 +767,7 @@ if __name__ == '__main__':
     parser.add_argument('--eleven_model', type=str, default='eleven_turbo_v2')
     parser.add_argument('--eleven_output_format', type=str, default='pcm_16000')
     parser.add_argument('--eleven_optimize_latency', type=int, default=1)
+    parser.add_argument('--eleven_speed', type=float, default=None)
     parser.add_argument('--secrets', type=str, default='/workspace/LiveTalking/keys.json', help='path to JSON secrets file')
     # parser.add_argument('--CHARACTER', type=str, default='test')
     # parser.add_argument('--EMOTION', type=str, default='default')
@@ -750,6 +840,7 @@ if __name__ == '__main__':
     appasync.router.add_post("/humanaudio", humanaudio)
     appasync.router.add_post("/set_audiotype", set_audiotype)
     appasync.router.add_post("/config", config)
+    appasync.router.add_post("/webrtc_quality", webrtc_quality)
     appasync.router.add_post("/record", record)
     appasync.router.add_post("/is_speaking", is_speaking)
     appasync.router.add_post("/end_session", end_session)

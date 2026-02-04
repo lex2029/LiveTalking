@@ -1,16 +1,17 @@
-# LiveTalking — Runbook (подробно)
+# LiveTalking — Runbook (актуально)
 
-Этот документ описывает, как повторить текущую настройку **через Codex CLI**: мультипроцессный WebRTC‑сервер, автозапуск воркеров по требованию, авто‑остановка при неактивности, Cloudflare Tunnel на постоянный домен, переключение качества/буфера.
+ВАЖНО: каждый раз при изменениях **обновляй этот файл** — добавляй всё нужное, удаляй неверное и ненужное. В следующий раз **сначала перечитай этот файл**.
 
-## 0) Что уже сделано в коде
-- Добавлен **gateway** (`gateway.py`) — держит **пул из 5 воркеров** `app.py` на портах 8091..8095 **всегда запущенными**.
-- Таймаут бездействия: **5 минут**, после чего **сессия сбрасывается**, но воркер **остается живым**.
-- В UI добавлены: **качество** (Low/Balanced/High) + **плейаут‑буфер** (0/200/400ms).
-- В WebRTC включён **relay‑режим TURN** по умолчанию (STUN опционален).
-- Автоприветствие на английском после подключения.
+## 1) Текущее состояние (что запущено и как работает)
+- Gateway: `/workspace/LiveTalking/gateway.py` слушает **8090**, старт через `./start_gateway.sh`.
+- Профили воркеров: `/workspace/LiveTalking/worker_profiles.json`.
+  - `head`: 5 воркеров, порты **8091–8095**, готов при наличии `ernerf/obama_eo_head/checkpoints/ngp.pth`.
+  - `torso`: 1 воркер, порт **8101**, готов при наличии `ernerf/obama_eo_torso/checkpoints/ngp_ep0028.pth`.
+    Если нужно включить раньше — поменяй `ready_check` на `.../ngp.pth`.
+- Таймаут бездействия: **300 секунд** после последнего сообщения; сессия сбрасывается, воркер остаётся тёплым.
+- UI: качество/буфер применяются **на лету**, переключение профиля модели требует **переподключения**.
 
-## 1) Базовая установка
-### 1.1 Зависимости (Python)
+## 2) Установка и зависимости
 ```bash
 cd /workspace/LiveTalking
 python -m venv /venv/nerfstream
@@ -18,77 +19,80 @@ source /venv/nerfstream/bin/activate
 pip install -r requirements.txt
 ```
 
-> Важно: для GPU‑рендера нужен PyTorch с CUDA под вашу версию драйвера.
+> Для GPU нужен PyTorch с CUDA под вашу версию драйвера.
 
-### 1.2 Файлы секретов (НЕ коммитим)
-1) Создай **keys.json** по шаблону:
+## 3) Секреты (не коммитим)
+### 3.1 `keys.json`
 ```bash
 cp /workspace/LiveTalking/keys.example.json /workspace/LiveTalking/keys.json
 ```
-Заполни поля:
+Заполнить:
 - `openai_key`, `openai_base`, `openai_model`
-- `eleven_key`, `eleven_voice`, `eleven_model`, `eleven_latency`, `eleven_output_format`
+- `eleven_key`, `eleven_voice`, `eleven_model`, `eleven_latency`, `eleven_output_format`, `eleven_speed`
 
-2) Создай **turn.env** по шаблону:
+### 3.2 `turn.env`
 ```bash
 cp /workspace/LiveTalking/turn.example.env /workspace/LiveTalking/turn.env
 ```
-Заполни:
+Заполнить:
 - `CF_TURN_TOKEN_ID`
 - `CF_TURN_API_TOKEN`
 - `CF_TURN_TTL`
 
-> `keys.json` и `turn.env` добавлены в `.gitignore`.
+> `keys.json` и `turn.env` уже в `.gitignore`.
 
-## 2) Запуск сервера (мультипроцесс)
-Один командный запуск (через Codex):
+## 4) Запуск сервера (мультипроцесс)
 ```bash
 /workspace/LiveTalking/start_gateway.sh
 ```
-
-Что делает скрипт:
-- экспортирует TURN‑секреты
-- ограничивает спавн потоков CPU
+Скрипт:
+- экспортирует TURN‑секреты из `turn.env`
+- ограничивает sprawl CPU‑потоков
 - убивает старые `gateway.py`/`app.py`
-- стартует `gateway.py` на **8090**
-
-**Gateway держит пул воркеров постоянно**:
-- воркеры на портах **8091–8095**
-- один воркер = один активный пользователь
-- если нет сообщений **5 минут**, сессия закрывается, воркер **остается готовым**
+- запускает gateway на 8090
 
 Логи:
-- Gateway: `gateway.log`
-- Воркеры: `logs/worker-8091.log` (и т.д.)
+- `/workspace/LiveTalking/gateway.log`
+- `/workspace/LiveTalking/logs/worker-8091.log` (и т.д.)
 
-## 3) Web‑интерфейс
-Открывай:
-```
-https://liveavatar.beintouch.me/dashboard.html
-```
+## 5) Веб‑интерфейс
+Открывать:
+- локально: `http://127.0.0.1:8090/dashboard.html`
+- домен: `https://liveavatar.beintouch.me/dashboard.html`
+
 В UI:
-- Переключай **Качество потока** (низкое/сбаланс./высокое)
-- Настраивай **Буфер (задержка)**: авто или 0/200/400ms
-- Переключатель **«Только TURN (relay)»**: стабильнее, но подключение дольше. Для быстрого подключения оставь выключенным.
-- Нажимай **«Подключиться»**
+- **Качество**: `Авто` или фиксированные уровни (emergency/very_low/low/balanced/high) — **на лету**.
+- **Буфер (задержка)**: `Авто` или 0/200/400 ms — **на лету**.
+- **Режим модели**: `Только голова` / `Голова + торс` — требует **переподключения**.
+- **Только TURN (relay)**: стабильнее через сложные сети, но подключение дольше.
 
-> После изменений качества/буфера — **переподключиться**.
+Если видишь старый JS / ошибки в консоли — делай **Ctrl+Shift+R** (жёсткое обновление).
 
-## 4) Cloudflare Tunnel (постоянный домен)
-### 4.1 Логин в Cloudflare
+## 6) Профили качества (сервер)
+Профили заданы в `app.py`:
+```python
+QUALITY_PROFILES = {
+  "emergency": {"max_bitrate": 80_000, "max_fps": 8,  "scale": 3.0},
+  "very_low":  {"max_bitrate": 150_000, "max_fps": 10, "scale": 2.5},
+  "low":       {"max_bitrate": 350_000, "max_fps": 15, "scale": 1.5},
+  "balanced":  {"max_bitrate": 800_000, "max_fps": 20, "scale": 1.0},
+  "high":      {"max_bitrate": 1_600_000, "max_fps": 25, "scale": 1.0},
+}
+```
+
+## 7) Cloudflare Tunnel (постоянный домен)
+### 7.1 Логин
 ```bash
 cloudflared tunnel login
 ```
-Открой ссылку, авторизуйся.
 
-### 4.2 Создать туннель и привязать домен
+### 7.2 Создать туннель и привязать домен
 ```bash
 cloudflared tunnel create liveavatar
 cloudflared tunnel route dns liveavatar liveavatar.beintouch.me
 ```
 
-### 4.3 Конфиг tunnel
-Файл: `/root/.cloudflared/config.yml`
+### 7.3 Конфиг `/root/.cloudflared/config.yml`
 ```yaml
 tunnel: <TUNNEL_ID>
 credentials-file: /root/.cloudflared/<TUNNEL_ID>.json
@@ -98,57 +102,39 @@ ingress:
   - service: http_status:404
 ```
 
-### 4.4 Запуск tunnel
+### 7.4 Запуск
 ```bash
 cloudflared --config /root/.cloudflared/config.yml tunnel run liveavatar
 ```
 
-> systemd недоступен, поэтому можно запускать через `nohup`/`screen`.
-
-## 5) Качество / битрейт / FPS
-Профили задаются в `app.py`:
-```python
-QUALITY_PROFILES = {
-  "low": {"max_bitrate": 350_000, "max_fps": 15, "scale": 1.5},
-  "balanced": {"max_bitrate": 800_000, "max_fps": 20, "scale": 1.0},
-  "high": {"max_bitrate": 1_600_000, "max_fps": 25, "scale": 1.0},
-}
-```
-
-Эти параметры применяются **только к выбранному режиму**, не грузят сервер лишней генерацией.
-
-## 6) Таймаут неактивности
-- Таймаут = **5 минут** без **сообщений**.
-- Счётчик **начинается после успешного подключения**, а не после клика.
-- UI показывает предупреждение + кнопку «Перезагрузить страницу».
-- По таймауту **сессия закрывается**, воркер остаётся тёплым.
-
-Чтобы изменить:
+## 8) Полная тренировка ER‑NeRF (head + lips + torso)
+Скрипт:
 ```bash
-# в start_gateway.sh
---idle_timeout 300
+/workspace/LiveTalking/scripts/train_obama_hq.sh
+```
+Запускает 3 этапа:
+1) Head (100k итераций)
+2) Lips fine‑tune (125k, LPIPS + landmarks)
+3) Torso (200k, с замороженной головой)
+
+Запуск в фоне:
+```bash
+cd /workspace/LiveTalking
+nohup ./scripts/train_obama_hq.sh > logs/train_obama_hq.log 2>&1 &
 ```
 
-## 7) Быстрый чек‑лист (если не работает)
+Прогресс:
+```bash
+tail -n 60 logs/train_obama_hq.log
+```
+
+Ожидаемые выходы:
+- `ernerf/obama_eo_head/checkpoints/ngp.pth`
+- `ernerf/obama_eo_torso/checkpoints/ngp.pth`
+
+## 9) Быстрый чек‑лист
 - `curl http://127.0.0.1:8090/ice` — должен вернуть ICE‑servers
-- `tail -n 100 gateway.log` — увидеть старт воркера
-- `tail -n 200 logs/worker-8091.log` — нет ли ошибок по модели/порту
-- Обнови страницу **Ctrl+Shift+R**
+- `tail -n 100 gateway.log` — есть старт воркеров
+- `tail -n 200 logs/worker-8091.log` — нет ошибок по модели/порту
 
-## 8) Как повторить через Codex (короткий набор команд)
-```bash
-# 1) создать secrets
-cp keys.example.json keys.json
-cp turn.example.env turn.env
-
-# 2) старт gateway
-./start_gateway.sh
-
-# 3) (разово) Cloudflare tunnel
-cloudflared tunnel login
-cloudflared tunnel create liveavatar
-cloudflared tunnel route dns liveavatar liveavatar.beintouch.me
-cloudflared --config /root/.cloudflared/config.yml tunnel run liveavatar
-```
-
-Готово.
+ВАЖНО: каждый раз при изменениях **обновляй этот файл** — добавляй всё нужное, удаляй неверное и ненужное. В следующий раз **сначала перечитай этот файл**.

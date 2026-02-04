@@ -16,8 +16,7 @@ pkill -f "/workspace/LiveTalking/app.py" || true
 
 nohup /venv/nerfstream/bin/python /workspace/LiveTalking/gateway.py \
   --listenport 8090 \
-  --base_port 8091 \
-  --max_workers 5 \
+  --profiles_file /workspace/LiveTalking/worker_profiles.json \
   --idle_timeout 300 \
   > /workspace/LiveTalking/gateway.log 2>&1 &
 

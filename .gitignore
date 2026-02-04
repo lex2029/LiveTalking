@@ -14,6 +14,8 @@ ernerf/data_utils/face_tracking/3DMM/
 ernerf/data_utils/face_parsing/79999_iter.pth
 ernerf/checkpoints.zip
 ernerf/nerf
+ernerf/obama_eo_head/
+ernerf/obama_eo_torso/
 
 pretrained
 *.mp4

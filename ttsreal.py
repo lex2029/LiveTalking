@@ -214,6 +214,7 @@ class ElevenLabsTTS(BaseTTS):
         model_id = getattr(self.parent, "eleven_model_id", "") or os.getenv("ELEVEN_MODEL_ID", "eleven_turbo_v2")
         output_format = getattr(self.parent, "eleven_output_format", "") or os.getenv("ELEVEN_OUTPUT_FORMAT", "pcm_16000")
         optimize_latency = getattr(self.parent, "eleven_optimize_latency", None)
+        speed = getattr(self.parent, "eleven_speed", None)
         if optimize_latency is None:
             try:
                 optimize_latency = int(os.getenv("ELEVEN_OPTIMIZE_LATENCY", "1"))
@@ -233,6 +234,24 @@ class ElevenLabsTTS(BaseTTS):
             "text": text,
             "model_id": model_id,
         }
+        voice_settings = {}
+        if speed is None:
+            try:
+                env_speed = os.getenv("ELEVEN_SPEED", "")
+                if env_speed:
+                    speed = float(env_speed)
+            except Exception:
+                speed = None
+        if speed is not None:
+            try:
+                speed = float(speed)
+                # ElevenLabs supports 0.7-1.2 (per docs); clamp to safe bounds.
+                speed = max(0.7, min(1.2, speed))
+                voice_settings["speed"] = speed
+            except Exception:
+                pass
+        if voice_settings:
+            payload["voice_settings"] = voice_settings
 
         headers = {
             "xi-api-key": api_key,

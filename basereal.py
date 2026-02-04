@@ -63,6 +63,12 @@ class BaseReal:
         self.eleven_model_id = os.getenv("ELEVEN_MODEL_ID", opt.eleven_model if hasattr(opt, "eleven_model") else "eleven_turbo_v2")
         self.eleven_output_format = os.getenv("ELEVEN_OUTPUT_FORMAT", opt.eleven_output_format if hasattr(opt, "eleven_output_format") else "pcm_16000")
         self.eleven_optimize_latency = int(os.getenv("ELEVEN_OPTIMIZE_LATENCY", opt.eleven_optimize_latency if hasattr(opt, "eleven_optimize_latency") else 1))
+        try:
+            speed_env = os.getenv("ELEVEN_SPEED", "")
+            speed_opt = opt.eleven_speed if hasattr(opt, "eleven_speed") else None
+            self.eleven_speed = float(speed_env) if speed_env else (float(speed_opt) if speed_opt is not None else None)
+        except Exception:
+            self.eleven_speed = None
 
         if opt.tts == "edgetts":
             self.tts = EdgeTTS(opt,self)
@@ -92,7 +98,10 @@ class BaseReal:
         self.custom_audio_index = {}
         self.custom_index = {}
         self.custom_opt = {}
+        self._auto_idle_state = None
         self.__loadcustom()
+        if self._auto_idle_state is not None:
+            self.curr_state = self._auto_idle_state
 
     def put_msg_txt(self,msg,eventpoint=None):
         self.tts.put_msg_txt(msg,eventpoint)
@@ -143,6 +152,8 @@ class BaseReal:
             self.custom_audio_index[item['audiotype']] = 0
             self.custom_index[item['audiotype']] = 0
             self.custom_opt[item['audiotype']] = item
+            if item.get('auto_idle'):
+                self._auto_idle_state = item['audiotype']
 
     def init_customindex(self):
         self.curr_state=0
@@ -270,8 +281,12 @@ class BaseReal:
         idx = self.custom_audio_index[audiotype]
         stream = self.custom_audio_cycle[audiotype][idx:idx+self.chunk]
         self.custom_audio_index[audiotype] += self.chunk
-        if self.custom_audio_index[audiotype]>=self.custom_audio_cycle[audiotype].shape[0]:
-            self.curr_state = 1  #当前视频不循环播放，切换到静音状态
+        if self.custom_audio_index[audiotype] >= self.custom_audio_cycle[audiotype].shape[0]:
+            loop = self.custom_opt.get(audiotype, {}).get('loop', True)
+            if loop:
+                self.custom_audio_index[audiotype] = 0
+            else:
+                self.curr_state = 1  #当前视频不循环播放，切换到静音状态
         return stream
     
     def set_custom_state(self,audiotype, reinit=True):

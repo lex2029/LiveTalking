@@ -9,7 +9,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 
 import aiohttp
 from aiohttp import web
@@ -240,8 +240,23 @@ async def ice(request: web.Request) -> web.Response:
 
 
 async def offer(request: web.Request) -> web.Response:
-    manager: WorkerManager = request.app["manager"]
     params = await request.json()
+    profile = params.get("profile") or request.app.get("default_profile") or "default"
+    managers = _get_managers(request.app)
+    manager = managers.get(profile)
+    if not manager:
+        return web.Response(
+            status=400,
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": f"Unknown profile: {profile}"}),
+        )
+    profiles_cfg = request.app.get("profiles", {})
+    if profiles_cfg and not _profile_ready(profiles_cfg.get(profile, {})):
+        return web.Response(
+            status=503,
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": "Profile not ready"}),
+        )
 
     worker = manager.get_free_worker()
     if not worker:
@@ -274,10 +289,9 @@ async def offer(request: web.Request) -> web.Response:
 
 
 async def human(request: web.Request) -> web.Response:
-    manager: WorkerManager = request.app["manager"]
     params = await request.json()
     sessionid = int(params.get("sessionid", 0))
-    worker = manager.get_worker_for_session(sessionid)
+    manager, worker = _find_worker(request.app, sessionid)
     if not worker:
         return web.Response(status=410, text="Session expired")
     manager.touch(worker)
@@ -289,10 +303,9 @@ async def human(request: web.Request) -> web.Response:
 
 
 async def humanaudio(request: web.Request) -> web.Response:
-    manager: WorkerManager = request.app["manager"]
     form = await request.post()
     sessionid = int(form.get("sessionid", 0))
-    worker = manager.get_worker_for_session(sessionid)
+    manager, worker = _find_worker(request.app, sessionid)
     if not worker:
         return web.Response(status=410, text="Session expired")
     manager.touch(worker)
@@ -317,10 +330,9 @@ async def humanaudio(request: web.Request) -> web.Response:
 
 
 async def set_audiotype(request: web.Request) -> web.Response:
-    manager: WorkerManager = request.app["manager"]
     params = await request.json()
     sessionid = int(params.get("sessionid", 0))
-    worker = manager.get_worker_for_session(sessionid)
+    manager, worker = _find_worker(request.app, sessionid)
     if not worker:
         return web.Response(status=410, text="Session expired")
 
@@ -331,10 +343,9 @@ async def set_audiotype(request: web.Request) -> web.Response:
 
 
 async def config(request: web.Request) -> web.Response:
-    manager: WorkerManager = request.app["manager"]
     params = await request.json()
     sessionid = int(params.get("sessionid", 0))
-    worker = manager.get_worker_for_session(sessionid) if sessionid else None
+    manager, worker = _find_worker(request.app, sessionid) if sessionid else (None, None)
     if sessionid and not worker:
         return web.Response(status=410, text="Session expired")
 
@@ -352,10 +363,9 @@ async def config(request: web.Request) -> web.Response:
 
 
 async def record(request: web.Request) -> web.Response:
-    manager: WorkerManager = request.app["manager"]
     params = await request.json()
     sessionid = int(params.get("sessionid", 0))
-    worker = manager.get_worker_for_session(sessionid)
+    manager, worker = _find_worker(request.app, sessionid)
     if not worker:
         return web.Response(status=410, text="Session expired")
 
@@ -366,10 +376,9 @@ async def record(request: web.Request) -> web.Response:
 
 
 async def is_speaking(request: web.Request) -> web.Response:
-    manager: WorkerManager = request.app["manager"]
     params = await request.json()
     sessionid = int(params.get("sessionid", 0))
-    worker = manager.get_worker_for_session(sessionid)
+    manager, worker = _find_worker(request.app, sessionid)
     if not worker:
         return web.Response(status=410, text="Session expired")
     url = f"http://127.0.0.1:{worker.port}/is_speaking"
@@ -378,33 +387,66 @@ async def is_speaking(request: web.Request) -> web.Response:
         return web.Response(status=resp.status, body=body, content_type=resp.content_type)
 
 
+async def webrtc_quality(request: web.Request) -> web.Response:
+    params = await request.json()
+    sessionid = int(params.get("sessionid", 0))
+    manager, worker = _find_worker(request.app, sessionid)
+    if not worker:
+        return web.Response(status=410, text="Session expired")
+    url = f"http://127.0.0.1:{worker.port}/webrtc_quality"
+    async with manager.client.post(url, json=params) as resp:
+        body = await resp.read()
+        return web.Response(status=resp.status, body=body, content_type=resp.content_type)
+
+
 async def on_startup(app: web.Application) -> None:
-    manager: WorkerManager = app["manager"]
-    await manager.start()
-    app["warm_task"] = asyncio.create_task(manager.start_all_workers())
-    app["cleanup_task"] = asyncio.create_task(manager.cleanup_loop())
+    managers = _get_managers(app)
+    if not managers:
+        return
+    for manager in managers.values():
+        await manager.start()
+
+    warm_tasks = []
+    cleanup_tasks = []
+    profiles_cfg = app.get("profiles", {})
+    profile_ready = {}
+    for name, manager in managers.items():
+        ready = True
+        if profiles_cfg:
+            ready = _profile_ready(profiles_cfg.get(name, {}))
+        profile_ready[name] = ready
+        if ready:
+            warm_tasks.append(asyncio.create_task(manager.start_all_workers()))
+        cleanup_tasks.append(asyncio.create_task(manager.cleanup_loop()))
+    app["warm_tasks"] = warm_tasks
+    app["cleanup_tasks"] = cleanup_tasks
+    app["profile_ready"] = profile_ready
+    if profiles_cfg:
+        app["profile_watch_task"] = asyncio.create_task(profile_watch_loop(app))
 
 
 async def on_shutdown(app: web.Application) -> None:
-    warm_task = app.get("warm_task")
-    if warm_task:
-        warm_task.cancel()
+    for task in app.get("warm_tasks", []):
+        task.cancel()
         with contextlib.suppress(Exception):
-            await warm_task
-    cleanup_task = app.get("cleanup_task")
-    if cleanup_task:
-        cleanup_task.cancel()
+            await task
+    for task in app.get("cleanup_tasks", []):
+        task.cancel()
         with contextlib.suppress(Exception):
-            await cleanup_task
-    manager: WorkerManager = app["manager"]
-    await manager.close()
+            await task
+    watch_task = app.get("profile_watch_task")
+    if watch_task:
+        watch_task.cancel()
+        with contextlib.suppress(Exception):
+            await watch_task
+    for manager in _get_managers(app).values():
+        await manager.close()
 
 
 async def end_session(request: web.Request) -> web.Response:
-    manager: WorkerManager = request.app["manager"]
     params = await request.json()
     sessionid = int(params.get("sessionid", 0))
-    worker = manager.get_worker_for_session(sessionid)
+    manager, worker = _find_worker(request.app, sessionid)
     if not worker:
         return web.Response(
             status=410,
@@ -427,6 +469,50 @@ async def no_cache_middleware(request, handler):
     return resp
 
 
+async def profile_watch_loop(app: web.Application) -> None:
+    while True:
+        profiles_cfg = app.get("profiles", {})
+        if not profiles_cfg:
+            return
+        profile_ready = app.get("profile_ready", {})
+        for name, manager in _get_managers(app).items():
+            cfg = profiles_cfg.get(name, {})
+            ready = _profile_ready(cfg)
+            was_ready = profile_ready.get(name, False)
+            profile_ready[name] = ready
+            if ready and not was_ready:
+                await manager.start_all_workers()
+        app["profile_ready"] = profile_ready
+        await asyncio.sleep(10)
+
+
+async def profiles(request: web.Request) -> web.Response:
+    profiles_cfg = request.app.get("profiles")
+    if not profiles_cfg:
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({
+                "default": "default",
+                "profiles": [{"id": "default", "label": "Default", "ready": True}],
+            }),
+        )
+
+    items = []
+    for name, cfg in profiles_cfg.items():
+        items.append({
+            "id": name,
+            "label": cfg.get("label", name),
+            "ready": _profile_ready(cfg),
+        })
+    return web.Response(
+        content_type="application/json",
+        text=json.dumps({
+            "default": request.app.get("default_profile") or next(iter(profiles_cfg.keys())),
+            "profiles": items,
+        }),
+    )
+
+
 def _load_args_file(path: str) -> List[str]:
     if not path:
         return []
@@ -437,6 +523,76 @@ def _load_args_file(path: str) -> List[str]:
     return [str(x) for x in data]
 
 
+def _resolve_path(path: str) -> Path:
+    p = Path(path)
+    if not p.is_absolute():
+        p = BASE_DIR / p
+    return p
+
+
+def _load_profiles_file(path: str) -> Tuple[Dict[str, dict], str]:
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    if isinstance(raw, dict) and "profiles" in raw:
+        profiles = raw.get("profiles", {})
+        default_profile = raw.get("default")
+    else:
+        profiles = raw if isinstance(raw, dict) else {}
+        default_profile = None
+
+    if not profiles:
+        raise ValueError("profiles_file has no profiles")
+
+    if not default_profile:
+        default_profile = next(iter(profiles.keys()))
+
+    normalized: Dict[str, dict] = {}
+    for name, cfg in profiles.items():
+        if not isinstance(cfg, dict):
+            raise ValueError(f"profile {name} must be an object")
+        args_file = cfg.get("worker_args_file") or cfg.get("args_file")
+        base_port = cfg.get("base_port")
+        max_workers = cfg.get("max_workers")
+        if not args_file or base_port is None or max_workers is None:
+            raise ValueError(f"profile {name} missing worker_args_file/base_port/max_workers")
+        ready_check = cfg.get("ready_check")
+        normalized[name] = {
+            "label": cfg.get("label", name),
+            "worker_args_file": str(args_file),
+            "base_port": int(base_port),
+            "max_workers": int(max_workers),
+            "ready_check": str(ready_check) if ready_check else "",
+        }
+
+    return normalized, str(default_profile)
+
+
+def _profile_ready(cfg: dict) -> bool:
+    ready_check = cfg.get("ready_check") or ""
+    if not ready_check:
+        return True
+    return _resolve_path(ready_check).exists()
+
+
+def _get_managers(app: web.Application) -> Dict[str, "WorkerManager"]:
+    managers = app.get("managers")
+    if managers:
+        return managers
+    manager = app.get("manager")
+    if manager:
+        return {"default": manager}
+    return {}
+
+
+def _find_worker(app: web.Application, sessionid: int) -> Tuple[Optional["WorkerManager"], Optional[Worker]]:
+    for manager in _get_managers(app).values():
+        worker = manager.get_worker_for_session(sessionid)
+        if worker:
+            return manager, worker
+    return None, None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--listenport", type=int, default=8090)
@@ -444,34 +600,59 @@ def main() -> None:
     parser.add_argument("--max_workers", type=int, default=5)
     parser.add_argument("--idle_timeout", type=int, default=60)
     parser.add_argument("--worker_args_file", type=str, default=str(BASE_DIR / "worker_args.json"))
+    parser.add_argument("--profiles_file", type=str, default="")
     args = parser.parse_args()
 
-    try:
-        base_args = _load_args_file(args.worker_args_file)
-    except FileNotFoundError:
-        base_args = []
-
-    ports = [args.base_port + i for i in range(args.max_workers)]
     env = os.environ.copy()
-
-    manager = WorkerManager(
-        base_args=base_args,
-        ports=ports,
-        idle_timeout=args.idle_timeout,
-        env=env,
-    )
+    profiles_file = args.profiles_file.strip()
+    if profiles_file:
+        profiles_cfg, default_profile = _load_profiles_file(_resolve_path(profiles_file))
+        managers: Dict[str, WorkerManager] = {}
+        for name, cfg in profiles_cfg.items():
+            try:
+                base_args = _load_args_file(_resolve_path(cfg["worker_args_file"]))
+            except FileNotFoundError:
+                base_args = []
+            ports = [cfg["base_port"] + i for i in range(cfg["max_workers"])]
+            managers[name] = WorkerManager(
+                base_args=base_args,
+                ports=ports,
+                idle_timeout=args.idle_timeout,
+                env=env,
+            )
+        manager = None
+    else:
+        try:
+            base_args = _load_args_file(args.worker_args_file)
+        except FileNotFoundError:
+            base_args = []
+        ports = [args.base_port + i for i in range(args.max_workers)]
+        managers = {}
+        manager = WorkerManager(
+            base_args=base_args,
+            ports=ports,
+            idle_timeout=args.idle_timeout,
+            env=env,
+        )
 
     app = web.Application()
     app.middlewares.append(no_cache_middleware)
-    app["manager"] = manager
+    if managers:
+        app["managers"] = managers
+        app["profiles"] = profiles_cfg
+        app["default_profile"] = default_profile
+    else:
+        app["manager"] = manager
 
     # Routes
     app.router.add_get("/ice", ice)
+    app.router.add_get("/profiles", profiles)
     app.router.add_post("/offer", offer)
     app.router.add_post("/human", human)
     app.router.add_post("/humanaudio", humanaudio)
     app.router.add_post("/set_audiotype", set_audiotype)
     app.router.add_post("/config", config)
+    app.router.add_post("/webrtc_quality", webrtc_quality)
     app.router.add_post("/record", record)
     app.router.add_post("/is_speaking", is_speaking)
     app.router.add_post("/end_session", end_session)
