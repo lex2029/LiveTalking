@@ -1,0 +1,5 @@
+ernerf/data/obama/gt_imgs/*.jpg filter=lfs diff=lfs merge=lfs -text
+ernerf/data/obama/torso_imgs/*.png filter=lfs diff=lfs merge=lfs -text
+ernerf/obama_eo_head/checkpoints/*.pth filter=lfs diff=lfs merge=lfs -text
+ernerf/obama_eo_torso/checkpoints/*.pth filter=lfs diff=lfs merge=lfs -text
+data/customvideo/idle/*.wav filter=lfs diff=lfs merge=lfs -text

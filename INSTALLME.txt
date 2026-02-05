@@ -1,0 +1,101 @@
+LiveAvatar (LiveTalking) – clean install & запуск
+================================================
+
+Это главный файл установки. Он должен быть достаточен для нового воркера.
+
+0) Что это такое
+----------------
+Сервис запускает LiveTalking (ER-NeRF) воркеры локально и стримит видео/аудио
+через Daily. Внешний доступ – только через Cloudflare Tunnel к порту 8090.
+
+1) Требования (минимум)
+-----------------------
+- Ubuntu 22.04
+- NVIDIA GPU (3090/4090/5090), 24–32GB VRAM
+- 64GB RAM (рекомендуется)
+
+Проверка GPU:
+  nvidia-smi
+
+2) Системные пакеты
+-------------------
+sudo apt update
+sudo apt install -y \
+  build-essential git git-lfs python3.10 python3.10-venv \
+  ffmpeg cmake ninja-build pkg-config \
+  libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
+  libssl-dev libffi-dev
+
+git lfs install
+
+3) Драйверы и CUDA
+------------------
+Нужен рабочий NVIDIA драйвер + CUDA (в этой системе: Driver 580.x, CUDA 13.0).
+Если драйверов нет, ставьте рекомендованные для вашей GPU:
+  - Убедитесь, что nvidia-smi видит GPU.
+  - PyTorch должен быть установлен с поддержкой CUDA.
+
+4) Клонирование репозитория
+---------------------------
+git clone <ВАШ_НОВЫЙ_РЕПОЗИТОРИЙ>
+cd LiveTalking
+
+Если в репозитории используются большие файлы (LFS):
+  git lfs pull
+
+5) Python окружение
+-------------------
+python3.10 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+
+# PyTorch (пример; выберите CUDA сборку под вашу систему)
+# В этой среде используется nightly cu128:
+#   pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
+# Если хотите стабильную – ставьте стабильную CUDA сборку PyTorch (cu121/cu124).
+
+pip install -r requirements.txt
+
+6) Секреты и окружение
+----------------------
+cp keys.example.json keys.json
+cp daily.example.env daily.env
+
+Отредактировать:
+  - keys.json (OpenAI/ElevenLabs ключи)
+  - daily.env (DAILY_API_KEY / DAILY_DOMAIN / тюнинг видео)
+
+7) Модели и данные
+------------------
+В репозиторий должны быть включены:
+  - ernerf/obama_eo_head/checkpoints/ngp.pth
+  - ernerf/obama_eo_torso/checkpoints/ngp.pth
+  - ernerf/data/obama (transforms_*.json, au.csv, bc.jpg, gt_imgs, torso_imgs)
+  - data/customvideo/idle (img + audio.wav)
+
+Если файл отсутствует – сервис стартовать не будет.
+
+8) Запуск
+---------
+Основной способ:
+  /workspace/LiveTalking/scripts/autostart_liveavatar.sh
+
+Или вручную:
+  /workspace/LiveTalking/start_gateway.sh
+
+Проверка:
+  curl http://127.0.0.1:8090/health
+
+9) Cloudflare Tunnel (опционально)
+----------------------------------
+Если нужен внешний доступ по домену:
+  - настроить cloudflared + config.yml
+  - запустить /workspace/LiveTalking/scripts/run_cloudflared_forever.sh
+
+10) Тест
+--------
+Открыть:
+  https://<your-domain>/dashboard.html
+
+Если "No available worker" – подождать прогрев воркеров.
+

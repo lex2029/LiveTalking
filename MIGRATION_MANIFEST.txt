@@ -1,0 +1,30 @@
+MIGRATION MANIFEST (что переносить в новый git)
+===============================================
+
+В репозитории должны быть файлы, которые нельзя быстро скачать без доступов.
+
+1) Обученные веса (кастомные)
+-----------------------------
+ernerf/obama_eo_head/checkpoints/ngp.pth
+ernerf/obama_eo_torso/checkpoints/ngp.pth
+
+2) Данные для инференса (кастомные, без них не стартует)
+--------------------------------------------------------
+ernerf/data/obama/transforms_*.json
+ernerf/data/obama/au.csv
+ernerf/data/obama/bc.jpg
+ernerf/data/obama/gt_imgs/*.jpg
+ernerf/data/obama/torso_imgs/*.png
+
+3) Idle-клип
+-------------
+data/customvideo/idle/img/*
+data/customvideo/idle/audio.wav
+
+4) Секреты (НЕ переносить в git)
+--------------------------------
+keys.json
+daily.env
+
+Примечание:
+Большие бинарные файлы лучше хранить через Git LFS.
