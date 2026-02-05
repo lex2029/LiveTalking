@@ -3,6 +3,7 @@ var remoteStream = null;
 var playoutStatsTimer = null;
 var qualityAutoTimer = null;
 var currentAutoQuality = null;
+var statsHudTimer = null;
 
 function getQualityPreference() {
     if (typeof window.getQualityPreference === 'function') {
@@ -184,6 +185,92 @@ function stopAutoQuality() {
     }
 }
 
+function formatPercent(value) {
+    if (typeof value !== 'number') return '';
+    return (value * 100).toFixed(1) + '%';
+}
+
+function summarizeStats(stats) {
+    let selectedPair = null;
+    stats.forEach((report) => {
+        if (report.type === 'candidate-pair' && report.state === 'succeeded' && (report.nominated || report.selected)) {
+            selectedPair = report;
+        }
+    });
+
+    let transport = '';
+    let candidateType = '';
+    let rttMs = null;
+    let available = null;
+    if (selectedPair) {
+        const local = stats.get(selectedPair.localCandidateId);
+        if (local) {
+            transport = local.protocol || local.transport || '';
+            candidateType = local.candidateType || '';
+        }
+        if (typeof selectedPair.currentRoundTripTime === 'number') {
+            rttMs = Math.round(selectedPair.currentRoundTripTime * 1000);
+        }
+        if (typeof selectedPair.availableIncomingBitrate === 'number') {
+            available = selectedPair.availableIncomingBitrate;
+        }
+    }
+
+    let lossRate = null;
+    let jitterMs = null;
+    let bufferMs = null;
+    stats.forEach((report) => {
+        if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+            if (typeof report.jitter === 'number') jitterMs = Math.round(report.jitter * 1000);
+            if (typeof report.packetsLost === 'number' && typeof report.packetsReceived === 'number') {
+                lossRate = report.packetsLost / Math.max(1, report.packetsLost + report.packetsReceived);
+            }
+            if (report.jitterBufferDelay && report.jitterBufferEmittedCount) {
+                bufferMs = Math.round((report.jitterBufferDelay / report.jitterBufferEmittedCount) * 1000);
+            }
+        }
+    });
+
+    const parts = [];
+    if (transport) {
+        const relay = candidateType ? ` ${candidateType}` : '';
+        parts.push(`${transport.toUpperCase()}${relay}`);
+    }
+    if (rttMs !== null) parts.push(`RTT ${rttMs}ms`);
+    if (lossRate !== null) parts.push(`loss ${formatPercent(lossRate)}`);
+    if (jitterMs !== null) parts.push(`jitter ${jitterMs}ms`);
+    if (bufferMs !== null) parts.push(`buf ${bufferMs}ms`);
+    if (available) parts.push(`in ${Math.round(available / 1000)}kbps`);
+    return parts.join(' • ');
+}
+
+function startStatsHud() {
+    if (!pc) return;
+    if (statsHudTimer) return;
+    statsHudTimer = setInterval(async () => {
+        if (!pc) return;
+        try {
+            const stats = await pc.getStats();
+            const summary = summarizeStats(stats);
+            if (typeof window.onWebRTCStats === 'function') {
+                window.onWebRTCStats(summary);
+            }
+        } catch (e) {
+            // ignore
+        }
+    }, 3000);
+}
+
+function stopStatsHud() {
+    if (statsHudTimer) {
+        clearInterval(statsHudTimer);
+        statsHudTimer = null;
+    }
+    if (typeof window.onWebRTCStats === 'function') {
+        window.onWebRTCStats('');
+    }
+}
+
 function applyQualityForSelection() {
     const quality = getQualityPreference();
     if (quality === 'auto') {
@@ -303,10 +390,12 @@ async function start() {
     pc.addEventListener('connectionstatechange', () => {
         if (!pc) return;
         if (pc.connectionState === 'connected') {
+            startStatsHud();
             if (typeof window.onWebRTCConnected === 'function') {
                 window.onWebRTCConnected();
             }
         } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+            stopStatsHud();
             if (typeof window.onWebRTCDisconnected === 'function') {
                 window.onWebRTCDisconnected();
             }
@@ -336,6 +425,7 @@ function stop() {
             pc = null;
             stopAutoPlayoutDelay();
             stopAutoQuality();
+            stopStatsHud();
             if (typeof window.onWebRTCDisconnected === 'function') {
                 window.onWebRTCDisconnected();
             }

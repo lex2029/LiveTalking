@@ -217,7 +217,7 @@ class NeRFReal(BaseReal):
     #     else:
     #         return size - res - 1   
 
-    def test_step(self,loop=None,audio_track=None,video_track=None):
+    def test_step(self,loop=None,audio_track=None,video_track=None,daily_sender=None):
         
         #starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
         #starter.record()
@@ -244,7 +244,14 @@ class NeRFReal(BaseReal):
             #print(f'[INFO] get_audio_out shape ',frame.shape)
             if self.opt.transport=='rtmp':                
                 self.streamer.stream_frame_audio(frame)
+            elif self.opt.transport=='daily' and daily_sender is not None:
+                frame = np.clip(frame, -1.0, 1.0)
+                frame = (frame * 32767).astype(np.int16)
+                daily_sender.send_audio(frame)
+                if eventpoint:
+                    self.notify(eventpoint)
             else: #webrtc
+                frame = np.clip(frame, -1.0, 1.0)
                 frame = (frame * 32767).astype(np.int16)
                 new_frame = AudioFrame(format='s16', layout='mono', samples=frame.shape[0])
                 new_frame.planes[0].update(frame.tobytes())
@@ -284,6 +291,8 @@ class NeRFReal(BaseReal):
             self.custom_index[audiotype1] += 1
             if self.opt.transport=='rtmp':
                 self.streamer.stream_frame(image)
+            elif self.opt.transport=='daily' and daily_sender is not None:
+                daily_sender.send_video(image)
             else:
                 new_frame = VideoFrame.from_ndarray(image, format="rgb24")
                 asyncio.run_coroutine_threadsafe(video_track._queue.put((new_frame,None)), loop)
@@ -295,6 +304,8 @@ class NeRFReal(BaseReal):
             if not self.opt.fullbody:
                 if self.opt.transport=='rtmp':
                     self.streamer.stream_frame(image)
+                elif self.opt.transport=='daily' and daily_sender is not None:
+                    daily_sender.send_video(image)
                 else:
                     new_frame = VideoFrame.from_ndarray(image, format="rgb24")
                     asyncio.run_coroutine_threadsafe(video_track._queue.put((new_frame,None)), loop)
@@ -309,6 +320,8 @@ class NeRFReal(BaseReal):
                 image_fullbody[start_y:start_y+image.shape[0], start_x:start_x+image.shape[1]] = image
                 if self.opt.transport=='rtmp':
                     self.streamer.stream_frame(image_fullbody)
+                elif self.opt.transport=='daily' and daily_sender is not None:
+                    daily_sender.send_video(image_fullbody)
                 else:
                     new_frame = VideoFrame.from_ndarray(image_fullbody, format="rgb24")
                     asyncio.run_coroutine_threadsafe(video_track._queue.put((new_frame,None)), loop)
@@ -318,7 +331,7 @@ class NeRFReal(BaseReal):
         #torch.cuda.synchronize()
         #t = starter.elapsed_time(ender)
             
-    def render(self,quit_event,loop=None,audio_track=None,video_track=None):
+    def render(self,quit_event,loop=None,audio_track=None,video_track=None,daily_sender=None):
         #if self.opt.asr:
         #     self.asr.warm_up()
         
@@ -361,7 +374,7 @@ class NeRFReal(BaseReal):
             # run 2 ASR steps (audio is at 50FPS, video is at 25FPS)
             for _ in range(2):
                 self.asr.run_step()
-            self.test_step(loop,audio_track,video_track)
+            self.test_step(loop,audio_track,video_track,daily_sender)
             totaltime += (time.perf_counter() - t)
             count += 1
             _totalframe += 1
@@ -373,7 +386,15 @@ class NeRFReal(BaseReal):
                 delay = _starttime+_totalframe*0.04-time.perf_counter() #40ms
                 if delay > 0:
                     time.sleep(delay)
-            else:
+            elif self.opt.transport=='daily':
+                target_fps = 25
+                if daily_sender is not None and hasattr(daily_sender, "config"):
+                    target_fps = getattr(daily_sender.config, "fps", 25) or 25
+                frame_period = 1.0 / float(target_fps)
+                delay = _starttime + _totalframe * frame_period - time.perf_counter()
+                if delay > 0:
+                    time.sleep(delay)
+            elif video_track is not None:
                 if video_track._queue.qsize()>=5:
                     #print('sleep qsize=',video_track._queue.qsize())
                     time.sleep(0.04*video_track._queue.qsize()*0.8)

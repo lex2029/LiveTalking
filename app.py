@@ -33,7 +33,6 @@ from aiohttp import web
 import aiohttp
 import aiohttp_cors
 from aiortc import RTCPeerConnection, RTCSessionDescription
-from aiortc import RTCConfiguration, RTCIceServer
 from aiortc.rtcrtpsender import RTCRtpSender
 from aiortc.rtcrtpparameters import RTCRtpEncodingParameters
 from webrtc import HumanPlayer
@@ -47,8 +46,96 @@ import asyncio
 import torch
 import os
 import time
-from typing import Dict
+from typing import Dict, Optional
 from logger import logger
+from daily_bot import DailyBot, DailyBotConfig
+import uuid
+
+
+def _enable_h264_nvenc() -> bool:
+    try:
+        import fractions
+        import av
+        import aiortc.codecs as codecs
+        import aiortc.codecs.h264 as h264
+    except Exception as exc:
+        logger.info("NVENC init skipped: %s", exc)
+        return False
+
+    try:
+        av.CodecContext.create("h264_nvenc", "w")
+    except av.AVError as exc:
+        logger.info("NVENC not available: %s", exc)
+        return False
+
+    class H264EncoderNVENC(h264.H264Encoder):
+        def _encode_frame(self, frame, force_keyframe: bool):
+            if self.codec and (
+                frame.width != self.codec.width
+                or frame.height != self.codec.height
+                or abs(self.target_bitrate - self.codec.bit_rate) / self.codec.bit_rate
+                > 0.1
+            ):
+                self.buffer_data = b""
+                self.buffer_pts = None
+                self.codec = None
+
+            if force_keyframe:
+                frame.pict_type = av.video.frame.PictureType.I
+            else:
+                frame.pict_type = av.video.frame.PictureType.NONE
+
+            if self.codec is None:
+                try:
+                    codec = av.CodecContext.create("h264_nvenc", "w")
+                except av.AVError:
+                    codec = av.CodecContext.create("libx264", "w")
+
+                codec.width = frame.width
+                codec.height = frame.height
+                codec.bit_rate = self.target_bitrate
+                codec.pix_fmt = "yuv420p"
+                codec.framerate = fractions.Fraction(h264.MAX_FRAME_RATE, 1)
+                codec.time_base = fractions.Fraction(1, h264.MAX_FRAME_RATE)
+
+                if codec.name == "h264_nvenc":
+                    try:
+                        codec.options = {
+                            "preset": "p3",
+                            "rc": "cbr",
+                            "bf": "0",
+                            "g": "60",
+                            "tune": "ll",
+                        }
+                    except Exception:
+                        codec.options = {}
+                    try:
+                        codec.profile = "baseline"
+                    except Exception:
+                        pass
+                else:
+                    codec.options = {
+                        "level": "31",
+                        "tune": "zerolatency",
+                    }
+                    codec.profile = "Baseline"
+
+                self.codec = codec
+
+            data_to_send = b""
+            for package in self.codec.encode(frame):
+                data_to_send += bytes(package)
+
+            if data_to_send:
+                yield from self._split_bitstream(data_to_send)
+
+    h264.H264Encoder = H264EncoderNVENC
+    codecs.H264Encoder = H264EncoderNVENC
+    logger.info("Using NVENC H264 encoder")
+    return True
+
+
+_H264_NVENC_ENABLED = _enable_h264_nvenc()
 
 
 app = Flask(__name__)
@@ -57,7 +144,6 @@ nerfreals:Dict[int, BaseReal] = {} #sessionid:BaseReal
 opt = None
 model = None
 avatar = None
-_ice_cache = {"expires_at": 0, "ice_servers": None}
 _default_config = {
     "openai_key": "",
     "openai_base": "",
@@ -76,26 +162,31 @@ QUALITY_PROFILES = {
         "max_bitrate": 80_000,
         "max_fps": 8,
         "scale": 3.0,
+        "audio_bitrate": 16_000,
     },
     "very_low": {
         "max_bitrate": 150_000,
         "max_fps": 10,
         "scale": 2.5,
+        "audio_bitrate": 20_000,
     },
     "low": {
         "max_bitrate": 350_000,
         "max_fps": 15,
         "scale": 1.5,
+        "audio_bitrate": 24_000,
     },
     "balanced": {
         "max_bitrate": 800_000,
         "max_fps": 20,
         "scale": 1.0,
+        "audio_bitrate": 32_000,
     },
     "high": {
         "max_bitrate": 1_600_000,
         "max_fps": 25,
         "scale": 1.0,
+        "audio_bitrate": 48_000,
     },
 }
 
@@ -118,6 +209,101 @@ def _apply_video_quality(sender: RTCRtpSender, quality: str) -> None:
     if profile.get("scale"):
         enc.scaleResolutionDownBy = float(profile["scale"])
     sender.setParameters(params)
+
+def _apply_audio_quality(sender: RTCRtpSender, quality: str) -> None:
+    profile = QUALITY_PROFILES.get((quality or "").lower())
+    if not profile:
+        return
+    if not hasattr(sender, "getParameters") or not hasattr(sender, "setParameters"):
+        return
+    params = sender.getParameters()
+    if not params.encodings:
+        params.encodings = [RTCRtpEncodingParameters()]
+    enc = params.encodings[0]
+    if profile.get("audio_bitrate"):
+        enc.maxBitrate = int(profile["audio_bitrate"])
+    sender.setParameters(params)
+
+def _parse_fmtp(params: str) -> dict:
+    result = {}
+    if not params:
+        return result
+    for item in params.split(";"):
+        item = item.strip()
+        if not item:
+            continue
+        if "=" in item:
+            key, value = item.split("=", 1)
+            result[key.strip()] = value.strip()
+        else:
+            result[item] = "1"
+    return result
+
+def _format_fmtp(params: dict) -> str:
+    items = []
+    for key in sorted(params.keys()):
+        value = params[key]
+        if value is None or value == "":
+            items.append(key)
+        else:
+            items.append(f"{key}={value}")
+    return ";".join(items)
+
+def _tune_audio_sdp(sdp: str) -> str:
+    lines = sdp.splitlines()
+    opus_pts = []
+    for line in lines:
+        if line.startswith("a=rtpmap:") and " opus/" in line.lower():
+            pt = line.split(":", 1)[1].split(" ", 1)[0]
+            opus_pts.append(pt)
+
+    if not opus_pts:
+        return sdp
+
+    tuned = []
+    opus_pt_set = set(opus_pts)
+    inserted = set()
+    for idx, line in enumerate(lines):
+        if line.startswith("a=fmtp:"):
+            pt = line.split(":", 1)[1].split(" ", 1)[0]
+            if pt in opus_pt_set:
+                params = ""
+                if " " in line:
+                    params = line.split(" ", 1)[1]
+                fmtp = _parse_fmtp(params)
+                fmtp.update(
+                    {
+                        "useinbandfec": "1",
+                        "cbr": "1",
+                        "maxaveragebitrate": "64000",
+                        "maxplaybackrate": "16000",
+                        "minptime": "10",
+                        "maxptime": "20",
+                        "ptime": "20",
+                        "stereo": "0",
+                    }
+                )
+                line = f"a=fmtp:{pt} {_format_fmtp(fmtp)}"
+                inserted.add(pt)
+        tuned.append(line)
+        if line.startswith("a=rtpmap:"):
+            pt = line.split(":", 1)[1].split(" ", 1)[0]
+            if pt in opus_pt_set and pt not in inserted:
+                fmtp = _format_fmtp(
+                    {
+                        "useinbandfec": "1",
+                        "cbr": "1",
+                        "maxaveragebitrate": "64000",
+                        "maxplaybackrate": "16000",
+                        "minptime": "10",
+                        "maxptime": "20",
+                        "ptime": "20",
+                        "stereo": "0",
+                    }
+                )
+                tuned.append(f"a=fmtp:{pt} {fmtp}")
+                inserted.add(pt)
+    return "\r\n".join(tuned) + "\r\n"
 
 
 def _apply_video_overrides(sender: RTCRtpSender, overrides: dict) -> None:
@@ -194,6 +380,8 @@ def _load_secrets(path: str):
 pcs = set()
 pcs_by_session: Dict[int, RTCPeerConnection] = {}
 video_senders_by_session: Dict[int, RTCRtpSender] = {}
+audio_senders_by_session: Dict[int, RTCRtpSender] = {}
+daily_sessions: Dict[int, dict] = {}
 
 def randN(N)->int:
     '''生成长度为 N的随机数 '''
@@ -236,125 +424,191 @@ def build_nerfreal(sessionid:int)->BaseReal:
         nerfreal.eleven_speed = _default_config["eleven_speed"]
     return nerfreal
 
-async def _fetch_cf_ice_servers():
-    token_id = os.getenv("CF_TURN_TOKEN_ID", "")
-    api_token = os.getenv("CF_TURN_API_TOKEN", "")
-    if not token_id or not api_token:
+def _daily_domain() -> str:
+    return os.getenv("DAILY_DOMAIN", "").strip()
+
+
+def _daily_api_key() -> str:
+    return os.getenv("DAILY_API_KEY", "").strip()
+
+
+async def _daily_api_request(method: str, path: str, payload: dict | None = None) -> Optional[dict]:
+    api_key = _daily_api_key()
+    if not api_key:
+        logger.info("Daily API key missing.")
         return None
-
-    ttl = int(os.getenv("CF_TURN_TTL", "3600"))
-    now = time.time()
-    if _ice_cache["ice_servers"] and now < _ice_cache["expires_at"] - 30:
-        return _ice_cache["ice_servers"]
-
-    url = f"https://rtc.live.cloudflare.com/v1/turn/keys/{token_id}/credentials/generate-ice-servers"
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json",
-    }
-    payload = {"ttl": ttl}
-
+    url = f"https://api.daily.co/v1/{path.lstrip('/')}"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers) as response:
+            async with session.request(method, url, json=payload, headers=headers) as response:
                 text = await response.text()
                 if response.status not in (200, 201):
-                    logger.info(f"Cloudflare TURN error {response.status}")
+                    logger.info("Daily API error %s: %s", response.status, text[:200])
                     return None
-                data = json.loads(text)
-    except aiohttp.ClientError as e:
-        logger.info(f"Cloudflare TURN request failed: {e}")
+                if not text:
+                    return {}
+                return json.loads(text)
+    except Exception as exc:
+        logger.info("Daily API request failed: %s", exc)
         return None
 
-    ice_servers = data.get("iceServers") or data.get("ice_servers") or data.get("ice")
-    if ice_servers:
-        _ice_cache["ice_servers"] = ice_servers
-        _ice_cache["expires_at"] = now + min(ttl, 24 * 3600)
-    return ice_servers
 
-def _make_rtc_configuration(ice_servers):
-    if not ice_servers:
+async def _daily_create_room(name: str) -> Optional[dict]:
+    ttl = int(os.getenv("DAILY_ROOM_TTL", "7200"))
+    payload = {
+        "name": name,
+        "privacy": "private",
+        "properties": {
+            "exp": int(time.time()) + ttl,
+        },
+    }
+    data = await _daily_api_request("post", "rooms", payload)
+    if data:
+        return data
+    # Fallback: try to fetch existing room
+    return await _daily_api_request("get", f"rooms/{name}")
+
+
+async def _daily_delete_room(name: str) -> None:
+    api_key = _daily_api_key()
+    if not api_key:
+        return
+    url = f"https://api.daily.co/v1/rooms/{name}"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.delete(url, headers=headers):
+                return
+    except Exception:
+        return
+
+
+async def _daily_create_token(room_name: str, user_name: str, is_owner: bool) -> Optional[str]:
+    ttl = int(os.getenv("DAILY_TOKEN_TTL", "7200"))
+    payload = {
+        "properties": {
+            "room_name": room_name,
+            "user_name": user_name,
+            "is_owner": is_owner,
+            "exp": int(time.time()) + ttl,
+        }
+    }
+    data = await _daily_api_request("post", "meeting-tokens", payload)
+    if not data:
         return None
-    servers = []
-    for s in ice_servers:
-        urls = s.get("urls") or s.get("url")
-        if isinstance(urls, str):
-            urls = [urls]
-        servers.append(
-            RTCIceServer(
-                urls=urls,
-                username=s.get("username"),
-                credential=s.get("credential"),
-            )
-        )
-    return RTCConfiguration(iceServers=servers)
+    return data.get("token")
 
 #@app.route('/offer', methods=['POST'])
 async def offer(request):
-    params = await request.json()
-    offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
-    quality = params.get("quality", "balanced")
+    return web.Response(
+        content_type="application/json",
+        status=410,
+        text=json.dumps({"code": -1, "msg": "WebRTC offer disabled (Daily only)"}),
+    )
 
+
+async def daily_start(request):
+    params = await request.json()
     if len(nerfreals) >= opt.max_session:
-        logger.info('reach max session')
         return web.Response(
             content_type="application/json",
             status=429,
             text=json.dumps({"code": -1, "msg": "reach max session"}),
         )
-    sessionid = randN(6) #len(nerfreals)
-    logger.info('sessionid=%d',sessionid)
+
+    domain = _daily_domain()
+    if not domain or not _daily_api_key():
+        return web.Response(
+            content_type="application/json",
+            status=500,
+            text=json.dumps({"code": -1, "msg": "Daily not configured"}),
+        )
+
+    sessionid = randN(6)
+    logger.info("daily sessionid=%d", sessionid)
     nerfreals[sessionid] = None
-    nerfreal = await asyncio.get_event_loop().run_in_executor(None, build_nerfreal,sessionid)
+    nerfreal = await asyncio.get_event_loop().run_in_executor(None, build_nerfreal, sessionid)
     nerfreals[sessionid] = nerfreal
-    
-    ice_servers = await _fetch_cf_ice_servers()
-    rtc_config = _make_rtc_configuration(ice_servers)
-    pc = RTCPeerConnection(configuration=rtc_config) if rtc_config else RTCPeerConnection()
-    pcs.add(pc)
-    pcs_by_session[sessionid] = pc
 
-    @pc.on("connectionstatechange")
-    async def on_connectionstatechange():
-        logger.info("Connection state is %s" % pc.connectionState)
-        if pc.connectionState == "failed":
-            await pc.close()
-            pcs.discard(pc)
-            pcs_by_session.pop(sessionid, None)
-            video_senders_by_session.pop(sessionid, None)
-            if sessionid in nerfreals:
-                del nerfreals[sessionid]
-        if pc.connectionState == "closed":
-            pcs.discard(pc)
-            pcs_by_session.pop(sessionid, None)
-            video_senders_by_session.pop(sessionid, None)
-            if sessionid in nerfreals:
-                del nerfreals[sessionid]
+    if opt.transport != "daily":
+        opt.transport = "daily"
 
-    player = HumanPlayer(nerfreals[sessionid])
-    audio_sender = pc.addTrack(player.audio)
-    video_sender = pc.addTrack(player.video)
-    _apply_video_quality(video_sender, quality)
-    video_senders_by_session[sessionid] = video_sender
-    capabilities = RTCRtpSender.getCapabilities("video")
-    preferences = list(filter(lambda x: x.name == "H264", capabilities.codecs))
-    preferences += list(filter(lambda x: x.name == "VP8", capabilities.codecs))
-    preferences += list(filter(lambda x: x.name == "rtx", capabilities.codecs))
-    transceiver = pc.getTransceivers()[1]
-    transceiver.setCodecPreferences(preferences)
+    room_name = f"avatar-{sessionid}-{uuid.uuid4().hex[:6]}"
+    room = await _daily_create_room(room_name)
+    if not room:
+        nerfreals.pop(sessionid, None)
+        return web.Response(
+            content_type="application/json",
+            status=502,
+            text=json.dumps({"code": -1, "msg": "Failed to create Daily room"}),
+        )
+    room_url = room.get("url") or f"https://{domain}/{room_name}"
 
-    await pc.setRemoteDescription(offer)
+    viewer_token = await _daily_create_token(room_name, "viewer", False)
+    bot_token = await _daily_create_token(room_name, f"avatar-{sessionid}", True)
+    if not viewer_token or not bot_token:
+        nerfreals.pop(sessionid, None)
+        await _daily_delete_room(room_name)
+        return web.Response(
+            content_type="application/json",
+            status=502,
+            text=json.dumps({"code": -1, "msg": "Failed to create Daily token"}),
+        )
 
-    answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
+    audio_rate = int(os.getenv("DAILY_AUDIO_RATE", "16000"))
+    audio_bitrate = int(os.getenv("DAILY_AUDIO_BITRATE", "64000"))
+    video_quality = os.getenv("DAILY_VIDEO_QUALITY", "high")
+    preferred_codec = os.getenv("DAILY_VIDEO_CODEC", "H264")
+    video_width = int(os.getenv("DAILY_VIDEO_WIDTH", str(nerfreal.W)))
+    video_height = int(os.getenv("DAILY_VIDEO_HEIGHT", str(nerfreal.H)))
+    video_fps = int(os.getenv("DAILY_VIDEO_FPS", "25"))
+    quality_auto = os.getenv("DAILY_QUALITY_AUTO", "1").strip() != "0"
+    bot = DailyBot(
+        DailyBotConfig(
+            room_url=room_url,
+            meeting_token=bot_token,
+            width=video_width,
+            height=video_height,
+            fps=video_fps,
+            sample_rate=audio_rate,
+            user_name=f"avatar-{sessionid}",
+            video_quality=video_quality,
+            preferred_codec=preferred_codec,
+            audio_bitrate=audio_bitrate,
+            quality_auto=quality_auto,
+        )
+    )
+    if not bot.wait_ready(15) or bot.error:
+        err = bot.error or "Daily bot join timeout"
+        bot.close()
+        nerfreals.pop(sessionid, None)
+        await _daily_delete_room(room_name)
+        return web.Response(
+            content_type="application/json",
+            status=502,
+            text=json.dumps({"code": -1, "msg": err}),
+        )
 
-    #return jsonify({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type})
+    quit_event = Event()
+    render_thread = Thread(
+        target=nerfreal.render,
+        args=(quit_event, None, None, None, bot),
+        daemon=True,
+    )
+    render_thread.start()
+
+    daily_sessions[sessionid] = {
+        "bot": bot,
+        "quit": quit_event,
+        "thread": render_thread,
+        "room_name": room_name,
+        "room_url": room_url,
+    }
 
     return web.Response(
         content_type="application/json",
-        text=json.dumps(
-            {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type, "sessionid":sessionid}
-        ),
+        text=json.dumps({"code": 0, "sessionid": sessionid, "room_url": room_url, "token": viewer_token}),
     )
 
 async def human(request):
@@ -490,8 +744,9 @@ async def config(request):
 async def webrtc_quality(request):
     params = await request.json()
     sessionid = int(params.get('sessionid', 0))
-    sender = video_senders_by_session.get(sessionid)
-    if not sender:
+    video_sender = video_senders_by_session.get(sessionid)
+    audio_sender = audio_senders_by_session.get(sessionid)
+    if not video_sender and not audio_sender:
         return web.Response(
             content_type="application/json",
             status=410,
@@ -500,7 +755,10 @@ async def webrtc_quality(request):
 
     quality = params.get("quality")
     if quality:
-        _apply_video_quality(sender, quality)
+        if video_sender:
+            _apply_video_quality(video_sender, quality)
+        if audio_sender:
+            _apply_audio_quality(audio_sender, quality)
     else:
         overrides = {}
         if params.get("max_bitrate") is not None:
@@ -519,7 +777,8 @@ async def webrtc_quality(request):
             except Exception:
                 pass
         if overrides:
-            _apply_video_overrides(sender, overrides)
+            if video_sender:
+                _apply_video_overrides(video_sender, overrides)
 
     return web.Response(
         content_type="application/json",
@@ -566,6 +825,28 @@ async def end_session(request):
                 pass
             pcs.discard(pc)
         video_senders_by_session.pop(sessionid, None)
+        audio_senders_by_session.pop(sessionid, None)
+        daily = daily_sessions.pop(sessionid, None)
+        if daily:
+            try:
+                daily.get("quit").set()
+            except Exception:
+                pass
+            try:
+                if daily.get("thread"):
+                    daily.get("thread").join(timeout=2)
+            except Exception:
+                pass
+            try:
+                daily.get("bot").close()
+            except Exception:
+                pass
+            try:
+                room_name = daily.get("room_name")
+                if room_name:
+                    await _daily_delete_room(room_name)
+            except Exception:
+                pass
         nerfreal = nerfreals.get(sessionid)
         if nerfreal:
             try:
@@ -578,14 +859,8 @@ async def end_session(request):
         text=json.dumps({"code": 0, "msg": "ended"}),
     )
 
-async def ice(request):
-    ice_servers = await _fetch_cf_ice_servers()
-    if not ice_servers:
-        ice_servers = []
-    return web.Response(
-        content_type="application/json",
-        text=json.dumps({"iceServers": ice_servers}),
-    )
+async def health(request):
+    return web.Response(text="ok")
 
 
 async def on_shutdown(app):
@@ -595,6 +870,29 @@ async def on_shutdown(app):
     pcs.clear()
     pcs_by_session.clear()
     video_senders_by_session.clear()
+    audio_senders_by_session.clear()
+    for sessionid, daily in list(daily_sessions.items()):
+        try:
+            daily.get("quit").set()
+        except Exception:
+            pass
+        try:
+            if daily.get("thread"):
+                daily.get("thread").join(timeout=2)
+        except Exception:
+            pass
+        try:
+            daily.get("bot").close()
+        except Exception:
+            pass
+        try:
+            room_name = daily.get("room_name")
+            if room_name:
+                await _daily_delete_room(room_name)
+        except Exception:
+            pass
+        daily_sessions.pop(sessionid, None)
+    audio_senders_by_session.clear()
 
 async def post(url,data):
     try:
@@ -608,9 +906,7 @@ async def run(push_url,sessionid):
     nerfreal = await asyncio.get_event_loop().run_in_executor(None, build_nerfreal,sessionid)
     nerfreals[sessionid] = nerfreal
 
-    ice_servers = await _fetch_cf_ice_servers()
-    rtc_config = _make_rtc_configuration(ice_servers)
-    pc = RTCPeerConnection(configuration=rtc_config) if rtc_config else RTCPeerConnection()
+    pc = RTCPeerConnection()
     pcs.add(pc)
 
     @pc.on("connectionstatechange")
@@ -835,7 +1131,7 @@ if __name__ == '__main__':
     #############################################################################
     appasync = web.Application()
     appasync.on_shutdown.append(on_shutdown)
-    appasync.router.add_post("/offer", offer)
+    appasync.router.add_post("/daily/start", daily_start)
     appasync.router.add_post("/human", human)
     appasync.router.add_post("/humanaudio", humanaudio)
     appasync.router.add_post("/set_audiotype", set_audiotype)
@@ -844,7 +1140,7 @@ if __name__ == '__main__':
     appasync.router.add_post("/record", record)
     appasync.router.add_post("/is_speaking", is_speaking)
     appasync.router.add_post("/end_session", end_session)
-    appasync.router.add_get("/ice", ice)
+    appasync.router.add_get("/health", health)
     appasync.router.add_static('/',path='web')
 
     # Configure default CORS settings.

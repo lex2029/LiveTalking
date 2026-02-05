@@ -31,6 +31,7 @@ class Worker:
     last_activity: float
     sessionid: Optional[int] = None
     log_path: Optional[Path] = None
+    ready: bool = False
     log_fp = None
 
 
@@ -110,7 +111,7 @@ class WorkerManager:
         if not self.client:
             return False
         deadline = time.time() + self.startup_timeout
-        url = f"http://127.0.0.1:{port}/ice"
+        url = f"http://127.0.0.1:{port}/health"
         while time.time() < deadline:
             try:
                 async with self.client.get(url) as resp:
@@ -157,6 +158,7 @@ class WorkerManager:
         if not ready or proc.poll() is not None:
             await self.stop_worker(worker, reason="startup-failed")
             return None
+        worker.ready = True
         return worker
 
     async def start_all_workers(self) -> None:
@@ -165,8 +167,17 @@ class WorkerManager:
 
     def get_free_worker(self) -> Optional[Worker]:
         for worker in self.workers_by_port.values():
-            if worker.process.poll() is None and worker.sessionid is None:
+            if worker.process.poll() is None and worker.sessionid is None and worker.ready:
                 return worker
+        return None
+
+    async def wait_for_free_worker(self, timeout: int = 60) -> Optional[Worker]:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            worker = self.get_free_worker()
+            if worker:
+                return worker
+            await asyncio.sleep(0.5)
         return None
 
     def map_session(self, sessionid: int, worker: Worker) -> None:
@@ -202,41 +213,8 @@ class WorkerManager:
         self.release_worker(worker)
 
 
-async def _fetch_cf_ice_servers() -> Optional[list]:
-    token_id = os.getenv("CF_TURN_TOKEN_ID", "")
-    api_token = os.getenv("CF_TURN_API_TOKEN", "")
-    if not token_id or not api_token:
-        return None
-
-    ttl = int(os.getenv("CF_TURN_TTL", "3600"))
-    url = f"https://rtc.live.cloudflare.com/v1/turn/keys/{token_id}/credentials/generate-ice-servers"
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json",
-    }
-    payload = {"ttl": ttl}
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers) as response:
-                text = await response.text()
-                if response.status not in (200, 201):
-                    return None
-                data = json.loads(text)
-    except aiohttp.ClientError:
-        return None
-
-    return data.get("iceServers") or data.get("ice_servers") or data.get("ice")
-
-
-async def ice(request: web.Request) -> web.Response:
-    ice_servers = await _fetch_cf_ice_servers()
-    if not ice_servers:
-        ice_servers = []
-    return web.Response(
-        content_type="application/json",
-        text=json.dumps({"iceServers": ice_servers}),
-    )
+async def health(request: web.Request) -> web.Response:
+    return web.Response(text="ok")
 
 
 async def offer(request: web.Request) -> web.Response:
@@ -258,7 +236,7 @@ async def offer(request: web.Request) -> web.Response:
             text=json.dumps({"code": -1, "msg": "Profile not ready"}),
         )
 
-    worker = manager.get_free_worker()
+    worker = await manager.wait_for_free_worker()
     if not worker:
         return web.Response(
             status=503,
@@ -267,6 +245,55 @@ async def offer(request: web.Request) -> web.Response:
         )
 
     url = f"http://127.0.0.1:{worker.port}/offer"
+    async with manager.client.post(url, json=params) as resp:
+        body_text = await resp.text()
+        try:
+            data = json.loads(body_text)
+        except Exception:
+            return web.Response(
+                status=502,
+                content_type="application/json",
+                text=json.dumps({"code": -1, "msg": "Invalid worker response", "detail": body_text[:200]}),
+            )
+
+        if resp.status == 200 and isinstance(data, dict) and data.get("code", 0) == 0 and "sessionid" in data:
+            sessionid = int(data["sessionid"])
+            manager.map_session(sessionid, worker)
+        return web.Response(
+            content_type="application/json",
+            status=resp.status,
+            text=json.dumps(data),
+        )
+
+
+async def daily_start(request: web.Request) -> web.Response:
+    params = await request.json()
+    profile = params.get("profile") or request.app.get("default_profile") or "default"
+    managers = _get_managers(request.app)
+    manager = managers.get(profile)
+    if not manager:
+        return web.Response(
+            status=400,
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": f"Unknown profile: {profile}"}),
+        )
+    profiles_cfg = request.app.get("profiles", {})
+    if profiles_cfg and not _profile_ready(profiles_cfg.get(profile, {})):
+        return web.Response(
+            status=503,
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": "Profile not ready"}),
+        )
+
+    worker = await manager.wait_for_free_worker()
+    if not worker:
+        return web.Response(
+            status=503,
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": "No available worker"}),
+        )
+
+    url = f"http://127.0.0.1:{worker.port}/daily/start"
     async with manager.client.post(url, json=params) as resp:
         body_text = await resp.text()
         try:
@@ -645,9 +672,9 @@ def main() -> None:
         app["manager"] = manager
 
     # Routes
-    app.router.add_get("/ice", ice)
+    app.router.add_get("/health", health)
     app.router.add_get("/profiles", profiles)
-    app.router.add_post("/offer", offer)
+    app.router.add_post("/daily/start", daily_start)
     app.router.add_post("/human", human)
     app.router.add_post("/humanaudio", humanaudio)
     app.router.add_post("/set_audiotype", set_audiotype)

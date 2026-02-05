@@ -1,6 +1,6 @@
 [
   "--model", "ernerf",
-  "--transport", "webrtc",
+  "--transport", "daily",
   "-O",
   "--secrets", "/workspace/LiveTalking/keys.json",
   "--tts", "elevenlabs",

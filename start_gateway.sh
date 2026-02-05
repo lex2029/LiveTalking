@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source /workspace/LiveTalking/turn.env
+if [ -f /workspace/LiveTalking/daily.env ]; then
+  source /workspace/LiveTalking/daily.env
+fi
 
 # Limit CPU thread sprawl
 export OMP_NUM_THREADS=1

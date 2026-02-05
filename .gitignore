@@ -28,6 +28,6 @@ dist
 logs/
 gateway.log
 keys.json
-turn.env
+daily.env
 temp*.aac
 temp*.mp4

@@ -4,12 +4,13 @@
 
 ## 1) Текущее состояние (что запущено и как работает)
 - Gateway: `/workspace/LiveTalking/gateway.py` слушает **8090**, старт через `./start_gateway.sh`.
+- Медиа‑доставка: **Daily** (бот публикует аудио/видео в Daily‑комнату).
 - Профили воркеров: `/workspace/LiveTalking/worker_profiles.json`.
   - `head`: 5 воркеров, порты **8091–8095**, готов при наличии `ernerf/obama_eo_head/checkpoints/ngp.pth`.
   - `torso`: 1 воркер, порт **8101**, готов при наличии `ernerf/obama_eo_torso/checkpoints/ngp_ep0028.pth`.
     Если нужно включить раньше — поменяй `ready_check` на `.../ngp.pth`.
 - Таймаут бездействия: **300 секунд** после последнего сообщения; сессия сбрасывается, воркер остаётся тёплым.
-- UI: качество/буфер применяются **на лету**, переключение профиля модели требует **переподключения**.
+- UI: Daily управляет транспортом; переключение профиля модели требует **переподключения**.
 
 ## 2) Установка и зависимости
 ```bash
@@ -30,23 +31,28 @@ cp /workspace/LiveTalking/keys.example.json /workspace/LiveTalking/keys.json
 - `openai_key`, `openai_base`, `openai_model`
 - `eleven_key`, `eleven_voice`, `eleven_model`, `eleven_latency`, `eleven_output_format`, `eleven_speed`
 
-### 3.2 `turn.env`
+### 3.2 `daily.env`
 ```bash
-cp /workspace/LiveTalking/turn.example.env /workspace/LiveTalking/turn.env
+cp /workspace/LiveTalking/daily.example.env /workspace/LiveTalking/daily.env
 ```
 Заполнить:
-- `CF_TURN_TOKEN_ID`
-- `CF_TURN_API_TOKEN`
-- `CF_TURN_TTL`
+- `DAILY_API_KEY`
+- `DAILY_DOMAIN` (например `smartblog.daily.co`)
+- `DAILY_ROOM_TTL`, `DAILY_TOKEN_TTL`
+- `DAILY_AUDIO_RATE`, `DAILY_AUDIO_BITRATE` (опционально, **рекомендовано 16000/64000 для лучшей синхронизации**)
+- `DAILY_VIDEO_WIDTH`, `DAILY_VIDEO_HEIGHT`, `DAILY_VIDEO_FPS` (опционально)
+- `DAILY_VIDEO_QUALITY`, `DAILY_VIDEO_CODEC` (опционально)
+- `DAILY_QUALITY_AUTO` (1/0), `DAILY_QUALITY_INTERVAL`, `DAILY_QUALITY_*_STREAK` — авто‑адаптация качества
+- `DAILY_AUDIO_QUEUE`, `DAILY_AUDIO_MAX_BACKLOG` — очередь аудио для ровного тайминга
 
-> `keys.json` и `turn.env` уже в `.gitignore`.
+> `daily.env` уже в `.gitignore`.
 
 ## 4) Запуск сервера (мультипроцесс)
 ```bash
 /workspace/LiveTalking/start_gateway.sh
 ```
 Скрипт:
-- экспортирует TURN‑секреты из `turn.env`
+- экспортирует Daily‑секреты из `daily.env`
 - ограничивает sprawl CPU‑потоков
 - убивает старые `gateway.py`/`app.py`
 - запускает gateway на 8090
@@ -58,56 +64,14 @@ cp /workspace/LiveTalking/turn.example.env /workspace/LiveTalking/turn.env
 ## 5) Веб‑интерфейс
 Открывать:
 - локально: `http://127.0.0.1:8090/dashboard.html`
-- домен: `https://liveavatar.beintouch.me/dashboard.html`
 
 В UI:
-- **Качество**: `Авто` или фиксированные уровни (emergency/very_low/low/balanced/high) — **на лету**.
-- **Буфер (задержка)**: `Авто` или 0/200/400 ms — **на лету**.
+- **Подключиться** создаёт Daily‑комнату и подключает браузер.
 - **Режим модели**: `Только голова` / `Голова + торс` — требует **переподключения**.
-- **Только TURN (relay)**: стабильнее через сложные сети, но подключение дольше.
 
 Если видишь старый JS / ошибки в консоли — делай **Ctrl+Shift+R** (жёсткое обновление).
 
-## 6) Профили качества (сервер)
-Профили заданы в `app.py`:
-```python
-QUALITY_PROFILES = {
-  "emergency": {"max_bitrate": 80_000, "max_fps": 8,  "scale": 3.0},
-  "very_low":  {"max_bitrate": 150_000, "max_fps": 10, "scale": 2.5},
-  "low":       {"max_bitrate": 350_000, "max_fps": 15, "scale": 1.5},
-  "balanced":  {"max_bitrate": 800_000, "max_fps": 20, "scale": 1.0},
-  "high":      {"max_bitrate": 1_600_000, "max_fps": 25, "scale": 1.0},
-}
-```
-
-## 7) Cloudflare Tunnel (постоянный домен)
-### 7.1 Логин
-```bash
-cloudflared tunnel login
-```
-
-### 7.2 Создать туннель и привязать домен
-```bash
-cloudflared tunnel create liveavatar
-cloudflared tunnel route dns liveavatar liveavatar.beintouch.me
-```
-
-### 7.3 Конфиг `/root/.cloudflared/config.yml`
-```yaml
-tunnel: <TUNNEL_ID>
-credentials-file: /root/.cloudflared/<TUNNEL_ID>.json
-ingress:
-  - hostname: liveavatar.beintouch.me
-    service: http://127.0.0.1:8090
-  - service: http_status:404
-```
-
-### 7.4 Запуск
-```bash
-cloudflared --config /root/.cloudflared/config.yml tunnel run liveavatar
-```
-
-## 8) Полная тренировка ER‑NeRF (head + lips + torso)
+## 6) Полная тренировка ER‑NeRF (head + lips + torso)
 Скрипт:
 ```bash
 /workspace/LiveTalking/scripts/train_obama_hq.sh
@@ -132,8 +96,8 @@ tail -n 60 logs/train_obama_hq.log
 - `ernerf/obama_eo_head/checkpoints/ngp.pth`
 - `ernerf/obama_eo_torso/checkpoints/ngp.pth`
 
-## 9) Быстрый чек‑лист
-- `curl http://127.0.0.1:8090/ice` — должен вернуть ICE‑servers
+## 7) Быстрый чек‑лист
+- `curl http://127.0.0.1:8090/health` — должен вернуть `ok`
 - `tail -n 100 gateway.log` — есть старт воркеров
 - `tail -n 200 logs/worker-8091.log` — нет ошибок по модели/порту
 

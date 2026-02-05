@@ -92,8 +92,8 @@ if [[ ! -f "$ROOT/keys.json" ]]; then
   echo "[WARN] keys.json missing. Copy keys.example.json to keys.json and fill API keys."
 fi
 
-if [[ ! -f "$ROOT/turn.env" ]]; then
-  echo "[WARN] turn.env missing. Copy turn.example.env to turn.env and fill TURN keys."
+if [[ ! -f "$ROOT/daily.env" ]]; then
+  echo "[WARN] daily.env missing. Copy daily.example.env to daily.env and fill Daily keys."
 fi
 
 # 6) Start gateway
@@ -103,4 +103,4 @@ else
   echo "[WARN] start_gateway.sh not found."
 fi
 
-printf "\nSetup complete. Open https://liveavatar.beintouch.me/dashboard.html\n"
+printf "\nSetup complete. Open http://127.0.0.1:8090/dashboard.html\n"

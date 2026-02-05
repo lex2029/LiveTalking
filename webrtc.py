@@ -27,12 +27,15 @@ from av import AudioFrame
 import fractions
 import numpy as np
 
+SAMPLE_RATE = 16000
 AUDIO_PTIME = 0.020  # 20ms audio packetization
 VIDEO_CLOCK_RATE = 90000
 VIDEO_PTIME = 0.040 #1 / 25  # 30fps
 VIDEO_TIME_BASE = fractions.Fraction(1, VIDEO_CLOCK_RATE)
-SAMPLE_RATE = 16000
 AUDIO_TIME_BASE = fractions.Fraction(1, SAMPLE_RATE)
+MAX_VIDEO_QUEUE = 8
+MAX_AUDIO_QUEUE = 120
+MAX_VIDEO_LATE = 0.12  # seconds before we drop video frames to catch up
 
 #from aiortc.contrib.media import MediaPlayer, MediaRelay
 #from aiortc.rtcrtpsender import RTCRtpSender
@@ -57,6 +60,13 @@ class PlayerStreamTrack(MediaStreamTrack):
         self._queue = asyncio.Queue()
         self.timelist = [] #记录最近包的时间戳
         self.current_frame_count = 0
+        self._start = None
+        self._timestamp = 0
+        self._frame_index = 0
+        self._audio_samples = 0
+        self._last_frame = None
+        self._dropped = 0
+        self._last_drop_log = 0.0
         if self.kind == 'video':
             self.framecount = 0
             self.lasttime = time.perf_counter()
@@ -65,77 +75,117 @@ class PlayerStreamTrack(MediaStreamTrack):
     _start: float
     _timestamp: int
 
-    async def next_timestamp(self) -> Tuple[int, fractions.Fraction]:
-        if self.readyState != "live":
-            raise Exception
-
+    def _ensure_start(self) -> None:
+        if self._start is not None:
+            return
+        shared_start = getattr(self._player, "_start_time", None)
+        if shared_start is None:
+            shared_start = time.perf_counter()
+            self._player._start_time = shared_start
+        self._start = shared_start
+        self._timestamp = 0
+        self._frame_index = 0
+        self._audio_samples = 0
+        self.timelist.append(self._start)
         if self.kind == 'video':
-            if hasattr(self, "_timestamp"):
-                #self._timestamp = (time.time()-self._start) * VIDEO_CLOCK_RATE
-                self._timestamp += int(VIDEO_PTIME * VIDEO_CLOCK_RATE)
-                self.current_frame_count += 1
-                wait = self._start + self.current_frame_count * VIDEO_PTIME - time.time()
-                # wait = self.timelist[0] + len(self.timelist)*VIDEO_PTIME - time.time()               
-                if wait>0:
-                    await asyncio.sleep(wait)
-                # if len(self.timelist)>=100:
-                #     self.timelist.pop(0)
-                # self.timelist.append(time.time())
-            else:
-                shared_start = getattr(self._player, "_start_time", None)
-                if shared_start is None:
-                    shared_start = time.time()
-                    self._player._start_time = shared_start
-                self._start = shared_start
-                self._timestamp = 0
-                self.timelist.append(self._start)
-                mylogger.info('video start:%f',self._start)
-            return self._timestamp, VIDEO_TIME_BASE
-        else: #audio
-            if hasattr(self, "_timestamp"):
-                #self._timestamp = (time.time()-self._start) * SAMPLE_RATE
-                self._timestamp += int(AUDIO_PTIME * SAMPLE_RATE)
-                self.current_frame_count += 1
-                wait = self._start + self.current_frame_count * AUDIO_PTIME - time.time()
-                # wait = self.timelist[0] + len(self.timelist)*AUDIO_PTIME - time.time()
-                if wait>0:
-                    await asyncio.sleep(wait)
-                # if len(self.timelist)>=200:
-                #     self.timelist.pop(0)
-                #     self.timelist.pop(0)
-                # self.timelist.append(time.time())
-            else:
-                shared_start = getattr(self._player, "_start_time", None)
-                if shared_start is None:
-                    shared_start = time.time()
-                    self._player._start_time = shared_start
-                self._start = shared_start
-                self._timestamp = 0
-                self.timelist.append(self._start)
-                mylogger.info('audio start:%f',self._start)
-            return self._timestamp, AUDIO_TIME_BASE
+            mylogger.info('video start:%f', self._start)
+        else:
+            mylogger.info('audio start:%f', self._start)
+
+    def _log_drops(self, dropped: int) -> None:
+        if dropped <= 0:
+            return
+        now = time.perf_counter()
+        if now - self._last_drop_log >= 5.0:
+            mylogger.warning("webrtc %s drop=%d q=%d", self.kind, dropped, self._queue.qsize())
+            self._last_drop_log = now
+
+    async def _next_audio_timestamp(self, frame: AudioFrame) -> Tuple[int, fractions.Fraction]:
+        self._ensure_start()
+        target_time = self._start + (self._audio_samples / SAMPLE_RATE)
+        wait = target_time - time.perf_counter()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        pts = self._audio_samples
+        self._audio_samples += int(frame.samples)
+        return pts, AUDIO_TIME_BASE
+
+    async def _next_video_timestamp(self) -> Tuple[int, fractions.Fraction]:
+        self._ensure_start()
+        target_time = self._start + (self._frame_index * VIDEO_PTIME)
+        wait = target_time - time.perf_counter()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        pts = int(self._frame_index * VIDEO_PTIME * VIDEO_CLOCK_RATE)
+        self._frame_index += 1
+        return pts, VIDEO_TIME_BASE
+
+    def _drop_audio_backlog(self) -> None:
+        if self._queue.qsize() <= MAX_AUDIO_QUEUE:
+            return
+        dropped = 0
+        while self._queue.qsize() > MAX_AUDIO_QUEUE // 2:
+            try:
+                self._queue.get_nowait()
+                dropped += 1
+            except asyncio.QueueEmpty:
+                break
+        self._log_drops(dropped)
+
+    def _drop_video_backlog(self, now: float) -> None:
+        if self._start is None:
+            return
+        dropped = 0
+        if self._queue.qsize() > MAX_VIDEO_QUEUE:
+            to_drop = max(0, self._queue.qsize() - 2)
+            for _ in range(to_drop):
+                try:
+                    self._queue.get_nowait()
+                    dropped += 1
+                except asyncio.QueueEmpty:
+                    break
+        target_index = int((now - self._start) / VIDEO_PTIME)
+        if target_index > self._frame_index + 1:
+            late_frames = target_index - self._frame_index - 1
+            if late_frames > 0 and self._queue.qsize() > 1:
+                for _ in range(min(late_frames, self._queue.qsize() - 1)):
+                    try:
+                        self._queue.get_nowait()
+                        dropped += 1
+                    except asyncio.QueueEmpty:
+                        break
+                self._frame_index = max(self._frame_index, target_index)
+        if dropped:
+            self._dropped += dropped
+            self._log_drops(dropped)
 
     async def recv(self) -> Union[Frame, Packet]:
         # frame = self.frames[self.counter % 30]            
         self._player._start(self)
-        # if self.kind == 'video':
-        #     frame = await self._queue.get()
-        # else: #audio
-        #     if hasattr(self, "_timestamp"):
-        #         wait = self._start + self._timestamp / SAMPLE_RATE + AUDIO_PTIME - time.time()
-        #         if wait>0:
-        #             await asyncio.sleep(wait)
-        #         if self._queue.qsize()<1:
-        #             #frame = AudioFrame(format='s16', layout='mono', samples=320)
-        #             audio = np.zeros((1, 320), dtype=np.int16)
-        #             frame = AudioFrame.from_ndarray(audio, layout='mono', format='s16')
-        #             frame.sample_rate=16000
-        #         else:
-        #             frame = await self._queue.get()
-        #     else:
-        #         frame = await self._queue.get()
-        frame,eventpoint = await self._queue.get()
-        pts, time_base = await self.next_timestamp()
+        eventpoint = None
+        if self.kind == 'audio':
+            self._drop_audio_backlog()
+            try:
+                frame, eventpoint = await asyncio.wait_for(self._queue.get(), timeout=AUDIO_PTIME)
+            except asyncio.TimeoutError:
+                audio = np.zeros((1, int(SAMPLE_RATE * AUDIO_PTIME)), dtype=np.int16)
+                frame = AudioFrame.from_ndarray(audio, layout='mono', format='s16')
+                frame.sample_rate = SAMPLE_RATE
+            pts, time_base = await self._next_audio_timestamp(frame)
+        else:
+            now = time.perf_counter()
+            self._ensure_start()
+            if now - self._start > MAX_VIDEO_LATE:
+                self._drop_video_backlog(now)
+            try:
+                frame, _ = await asyncio.wait_for(self._queue.get(), timeout=VIDEO_PTIME)
+                self._last_frame = frame
+            except asyncio.TimeoutError:
+                frame = self._last_frame
+                if frame is None:
+                    frame, _ = await self._queue.get()
+                    self._last_frame = frame
+            pts, time_base = await self._next_video_timestamp()
         frame.pts = pts
         frame.time_base = time_base
         if eventpoint:
