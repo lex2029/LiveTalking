@@ -75,6 +75,9 @@ cp daily.example.env daily.env
 
 Если файл отсутствует – сервис стартовать не будет.
 
+Проверка:
+  ./scripts/verify_assets.sh
+
 8) Запуск
 ---------
 Основной способ:
@@ -98,4 +101,3 @@ cp daily.example.env daily.env
   https://<your-domain>/dashboard.html
 
 Если "No available worker" – подождать прогрев воркеров.
-
