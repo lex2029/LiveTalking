@@ -114,23 +114,42 @@ function getProfilePreference() {
 
 async function start() {
     var profile = getProfilePreference();
-    var response = await fetch('/daily/start', {
-        body: JSON.stringify({ profile: profile }),
-        headers: { 'Content-Type': 'application/json' },
-        method: 'POST'
-    });
-
-    var text = await response.text();
+    var attempts = 0;
     var data = null;
-    try {
-        data = JSON.parse(text);
-    } catch (e) {
-        alert('Daily start failed: ' + text.slice(0, 200));
-        return;
-    }
-    if (!response.ok || !data || data.code < 0) {
-        alert(data && data.msg ? data.msg : 'Daily start failed');
-        return;
+    var lastError = '';
+
+    while (attempts < 3) {
+        attempts += 1;
+        var response = await fetch('/daily/start', {
+            body: JSON.stringify({ profile: profile }),
+            headers: { 'Content-Type': 'application/json' },
+            method: 'POST'
+        });
+
+        var text = await response.text();
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            lastError = text.slice(0, 200);
+            if (attempts < 3) {
+                await new Promise(function(r) { setTimeout(r, 700 * attempts); });
+                continue;
+            }
+            alert('Daily start failed: ' + lastError);
+            return false;
+        }
+
+        if (!response.ok || !data || data.code < 0) {
+            lastError = data && data.msg ? data.msg : 'Daily start failed';
+            if (attempts < 3) {
+                await new Promise(function(r) { setTimeout(r, 700 * attempts); });
+                continue;
+            }
+            alert(lastError);
+            return false;
+        }
+
+        break;
     }
 
     document.getElementById('sessionid').value = data.sessionid || 0;
@@ -237,6 +256,7 @@ async function start() {
         callObject.setLocalAudio(false);
         callObject.setLocalVideo(false);
     } catch (e) {}
+    return true;
 }
 
 function stop() {

@@ -674,26 +674,32 @@
                 autoMicEnabled = true;
                 startRecording(true);
                 primeVideoPlayback();
-                start();
-                $(this).hide();
-                $('#stop').show();
-                
-                // 添加定时器检查视频流是否已加载
-                let connectionCheckTimer = setInterval(function() {
-                    const video = document.getElementById('video');
-                    // 检查视频是否有数据
-                    if (video.readyState >= 3 && video.videoWidth > 0) {
-                        updateConnectionStatus('connected');
-                        clearInterval(connectionCheckTimer);
+                start().then(function(ok) {
+                    if (!ok) {
+                        updateConnectionStatus('disconnected');
+                        stopRecording('disconnect');
+                        $('#start').show();
+                        $('#stop').hide();
+                        return;
                     }
-                }, 2000); // 每2秒检查一次
-                
-                // 60秒后如果还是连接中状态，就停止检查
-                setTimeout(function() {
-                    if (connectionCheckTimer) {
-                        clearInterval(connectionCheckTimer);
-                    }
-                }, 60000);
+                    $('#start').hide();
+                    $('#stop').show();
+
+                    // Добавить таймер проверки видеопотока
+                    let connectionCheckTimer = setInterval(function() {
+                        const video = document.getElementById('video');
+                        if (video.readyState >= 3 && video.videoWidth > 0) {
+                            updateConnectionStatus('connected');
+                            clearInterval(connectionCheckTimer);
+                        }
+                    }, 2000);
+
+                    setTimeout(function() {
+                        if (connectionCheckTimer) {
+                            clearInterval(connectionCheckTimer);
+                        }
+                    }, 60000);
+                });
             });
 
             $('#stop').click(function() {
