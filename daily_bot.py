@@ -127,13 +127,12 @@ class DailyBot:
                             "preferredCodec": self.config.preferred_codec,
                         },
                     },
-                    "microphone": {
-                        "isPublishing": True,
-                        "sendSettings": {
-                            "bitrate": self.config.audio_bitrate,
-                            "channelConfig": "mono",
-                        },
+                "microphone": {
+                    "isPublishing": True,
+                    "sendSettings": {
+                        "bitrate": self.config.audio_bitrate,
                     },
+                },
                 },
             }
             self.client.join(
