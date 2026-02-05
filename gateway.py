@@ -154,6 +154,21 @@ class WorkerManager:
                 print(f"[gateway] worker {worker.port} still starting after {int(elapsed)}s", flush=True)
             await asyncio.sleep(0.5)
 
+    async def wait_until_ready(self, worker: Worker, timeout: Optional[int] = None) -> bool:
+        if worker.ready:
+            return True
+        if timeout is None:
+            timeout = self.startup_timeout
+        deadline = time.time() + timeout if timeout and timeout > 0 else None
+        while True:
+            if worker.ready:
+                return True
+            if worker.process.poll() is not None:
+                return False
+            if deadline and time.time() >= deadline:
+                return False
+            await asyncio.sleep(0.5)
+
     async def start_worker_at(self, port: int) -> Optional[Worker]:
         existing = self.workers_by_port.get(port)
         if existing and existing.process.poll() is None:
@@ -194,7 +209,9 @@ class WorkerManager:
 
     async def start_all_workers(self) -> None:
         for port in self.ports:
-            await self.start_worker_at(port)
+            worker = await self.start_worker_at(port)
+            if worker:
+                await self.wait_until_ready(worker, timeout=self.startup_timeout)
             if self.startup_stagger > 0:
                 await asyncio.sleep(self.startup_stagger)
 
