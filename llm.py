@@ -3,6 +3,46 @@ import os
 from basereal import BaseReal
 from logger import logger
 
+SYSTEM_PROMPT = (
+    "You are a helpful assistant for a live video avatar. "
+    "Always reply in the same language as the user's last message. "
+    "Keep responses concise and natural for spoken audio. "
+    "Do not repeat or quote the user's message. "
+    "Do not append the user's message at the end."
+)
+MAX_HISTORY = 10
+
+
+def _get_history(nerfreal: BaseReal):
+    history = getattr(nerfreal, "chat_history", None)
+    if history is None:
+        history = []
+        nerfreal.chat_history = history
+    return history
+
+
+def _append_history(history, role, content):
+    if not content:
+        return
+    history.append({"role": role, "content": content})
+    if len(history) > MAX_HISTORY:
+        del history[:-MAX_HISTORY]
+
+
+def _strip_user_echo(text: str, user_msg: str) -> str:
+    if not text or not user_msg:
+        return text
+    user_clean = user_msg.strip()
+    if not user_clean:
+        return text
+    trimmed = text.strip()
+    if trimmed == user_clean:
+        return ""
+    if trimmed.endswith(user_clean):
+        trimmed = trimmed[: -len(user_clean)].rstrip()
+    return trimmed
+
+
 def llm_response(message,nerfreal:BaseReal):
     start = time.perf_counter()
     from openai import OpenAI
@@ -29,15 +69,20 @@ def llm_response(message,nerfreal:BaseReal):
         raise RuntimeError("No LLM API key configured.")
     end = time.perf_counter()
     logger.info(f"llm Time init: {end-start}s")
+    history = _get_history(nerfreal)
+    prompt_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history[-MAX_HISTORY:] + [
+        {"role": "user", "content": message}
+    ]
+    _append_history(history, "user", message)
+
     completion = client.chat.completions.create(
         model=model_name,
-        messages=[{'role': 'system', 'content': 'You are a helpful assistant.'},
-                  {'role': 'user', 'content': message}],
+        messages=prompt_messages,
         stream=True,
-        # 通过以下设置，在流式输出的最后一行展示token使用信息
         stream_options={"include_usage": True}
     )
     result=""
+    full_response=""
     first = True
     for chunk in completion:
         if len(chunk.choices)>0:
@@ -47,6 +92,8 @@ def llm_response(message,nerfreal:BaseReal):
                 logger.info(f"llm Time to first chunk: {end-start}s")
                 first = False
             msg = chunk.choices[0].delta.content
+            if msg:
+                full_response += msg
             lastpos=0
             #msglist = re.split('[,.!;:，。！?]',msg)
             for i, char in enumerate(msg):
@@ -54,10 +101,16 @@ def llm_response(message,nerfreal:BaseReal):
                     result = result+msg[lastpos:i+1]
                     lastpos = i+1
                     if len(result)>10:
-                        logger.info(result)
-                        nerfreal.put_msg_txt(result)
+                        cleaned = _strip_user_echo(result, message)
+                        if cleaned:
+                            logger.info(cleaned)
+                            nerfreal.put_msg_txt(cleaned)
                         result=""
             result = result+msg[lastpos:]
     end = time.perf_counter()
     logger.info(f"llm Time to last chunk: {end-start}s")
-    nerfreal.put_msg_txt(result)    
+    cleaned_final = _strip_user_echo(result, message)
+    if cleaned_final:
+        nerfreal.put_msg_txt(cleaned_final)
+    full_response = _strip_user_echo(full_response, message)
+    _append_history(history, "assistant", full_response)

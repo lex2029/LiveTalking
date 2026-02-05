@@ -638,11 +638,20 @@
                     </div>
                 `);
 
-                messagesContainer.prepend(messageElement);
-                if (messagesContainer.children().length > 60) {
-                    messagesContainer.children().last().remove();
+                const isDesktop = window.matchMedia('(min-width: 980px)').matches;
+                if (isDesktop) {
+                    messagesContainer.append(messageElement);
+                    if (messagesContainer.children().length > 60) {
+                        messagesContainer.children().first().remove();
+                    }
+                    messagesContainer.scrollTop(messagesContainer[0].scrollHeight);
+                } else {
+                    messagesContainer.prepend(messageElement);
+                    if (messagesContainer.children().length > 60) {
+                        messagesContainer.children().last().remove();
+                    }
+                    messagesContainer.scrollTop(0);
                 }
-                messagesContainer.scrollTop(0);
             }
 
             // 开始/停止按钮
