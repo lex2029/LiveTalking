@@ -16,6 +16,17 @@ var QUALITY_PROFILES = {
     low: { bandwidthKbps: 450, spatialLayer: 0, temporalLayer: 0 }
 };
 
+function handleRemoteGone(reason) {
+    if (!remoteStream) return;
+    if (remoteStream.getTracks().length > 0) return;
+    window.__dailyConnected = false;
+    if (typeof window.onPeerDisconnected === 'function') {
+        window.onPeerDisconnected(reason || 'remote-left');
+    } else if (typeof window.onWebRTCDisconnected === 'function') {
+        window.onWebRTCDisconnected();
+    }
+}
+
 function updateQualityStatus() {
     try {
         var el = document.getElementById('status-details');
@@ -154,6 +165,7 @@ async function start() {
         }
         if (ev.track) {
             remoteStream.removeTrack(ev.track);
+            handleRemoteGone('remote-track-stopped');
         }
     });
 
@@ -169,6 +181,11 @@ async function start() {
         if (typeof window.onWebRTCDisconnected === 'function') {
             window.onWebRTCDisconnected();
         }
+    });
+
+    callObject.on('participant-left', function (ev) {
+        if (ev && ev.participant && ev.participant.local) return;
+        handleRemoteGone('remote-left');
     });
 
     callObject.on('error', function (ev) {
