@@ -750,6 +750,11 @@
             let lastTranscript = '';
             let lastFinalTranscript = '';
             let pendingTerminateTimer = null;
+            let assemblyReadyToSend = false;
+            let prebufferChunks = [];
+            let prebufferBytes = 0;
+            const PREBUFFER_MS = 600;
+            const PREBUFFER_MAX_BYTES = Math.floor(16000 * 2 * (PREBUFFER_MS / 1000));
 
             function interruptAvatar() {
                 const sid = parseInt(document.getElementById('sessionid').value);
@@ -839,12 +844,22 @@
                 assemblyZeroGain.gain.value = 0;
 
                 assemblyProcessor.onaudioprocess = function(e) {
-                    if (!assemblySocket || assemblySocket.readyState !== WebSocket.OPEN) return;
                     const input = e.inputBuffer.getChannelData(0);
                     const downsampled = downsampleBuffer(input, assemblyAudioContext.sampleRate, 16000);
                     const pcm = floatTo16BitPCM(downsampled);
-                    if (pcm.byteLength > 0) {
+                    if (pcm.byteLength <= 0) return;
+                    if (assemblySocket && assemblySocket.readyState === WebSocket.OPEN && assemblyReadyToSend) {
                         assemblySocket.send(pcm);
+                        return;
+                    }
+                    // Prebuffer audio until socket is ready.
+                    prebufferChunks.push(pcm);
+                    prebufferBytes += pcm.byteLength;
+                    while (prebufferBytes > PREBUFFER_MAX_BYTES && prebufferChunks.length > 0) {
+                        const dropped = prebufferChunks.shift();
+                        if (dropped) {
+                            prebufferBytes -= dropped.byteLength;
+                        }
                     }
                 };
 
@@ -875,6 +890,9 @@
                 assemblyZeroGain = null;
                 assemblyAudioContext = null;
                 assemblyStream = null;
+                prebufferChunks = [];
+                prebufferBytes = 0;
+                assemblyReadyToSend = false;
             }
 
             function finalizeTranscript(text, autoStop) {
@@ -904,13 +922,17 @@
                     return;
                 }
                 if (message.type === 'Turn') {
+                    const utterance = (message.utterance || '').trim();
                     const transcript = (message.transcript || '').trim();
-                    if (transcript) {
+                    if (utterance) {
+                        lastTranscript = utterance;
+                        $('#chat-message').val(utterance);
+                    } else if (transcript) {
                         lastTranscript = transcript;
                         $('#chat-message').val(transcript);
                     }
-                    if (message.end_of_turn && transcript) {
-                        finalizeTranscript(transcript, true);
+                    if (message.end_of_turn) {
+                        finalizeTranscript(transcript || utterance || lastTranscript, true);
                     }
                 }
             }
@@ -936,6 +958,9 @@
                 isRecording = true;
                 lastTranscript = '';
                 lastFinalTranscript = '';
+                prebufferChunks = [];
+                prebufferBytes = 0;
+                assemblyReadyToSend = false;
                 if (pendingTerminateTimer) {
                     clearTimeout(pendingTerminateTimer);
                     pendingTerminateTimer = null;
@@ -969,8 +994,18 @@
 
                 assemblySocket = new WebSocket(buildAssemblyUrl(token));
                 assemblySocket.binaryType = 'arraybuffer';
+                startAudioProcessing(assemblyStream);
                 assemblySocket.onopen = function() {
-                    startAudioProcessing(assemblyStream);
+                    assemblyReadyToSend = true;
+                    if (prebufferChunks.length > 0) {
+                        prebufferChunks.forEach(function(chunk) {
+                            if (assemblySocket && assemblySocket.readyState === WebSocket.OPEN) {
+                                assemblySocket.send(chunk);
+                            }
+                        });
+                        prebufferChunks = [];
+                        prebufferBytes = 0;
+                    }
                 };
                 assemblySocket.onmessage = handleAssemblyMessage;
                 assemblySocket.onerror = function(err) {
