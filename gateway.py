@@ -477,6 +477,8 @@ async def assemblyai_token(request: web.Request) -> web.Response:
         worker = await manager.start_worker_at(manager.ports[0])
         if worker:
             await manager.wait_until_ready(worker)
+    if worker and not worker.ready:
+        await manager.wait_until_ready(worker)
 
     if not worker:
         return web.Response(
