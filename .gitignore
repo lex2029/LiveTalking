@@ -42,11 +42,9 @@ ernerf/obama_eo_torso/validation/
 !ernerf/data/obama/transforms_*.json
 !ernerf/data/obama/au.csv
 !ernerf/data/obama/bc.jpg
-!ernerf/data/obama/gt_imgs/
-!ernerf/data/obama/gt_imgs/**
-!ernerf/data/obama/torso_imgs/
-!ernerf/data/obama/torso_imgs/**
 ernerf/data/user_avatar/
+ernerf/data/obama/gt_imgs/
+ernerf/data/obama/torso_imgs/
 ernerf/data/obama/ori_imgs/
 ernerf/data/obama/parsing/
 ernerf/data/obama/openface/

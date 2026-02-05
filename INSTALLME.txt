@@ -70,8 +70,12 @@ cp daily.example.env daily.env
 В репозиторий должны быть включены:
   - ernerf/obama_eo_head/checkpoints/ngp.pth
   - ernerf/obama_eo_torso/checkpoints/ngp.pth
-  - ernerf/data/obama (transforms_*.json, au.csv, bc.jpg, gt_imgs, torso_imgs)
+  - ernerf/data/obama (transforms_*.json, au.csv, bc.jpg)
   - data/customvideo/idle (img + audio.wav)
+  - archives/obama_assets.tar.zst (gt_imgs, torso_imgs, ori_imgs, parsing, openface, aud_eo.npy, aud.wav, obama.mp4, track_params.pt)
+
+Если есть архив, распаковать в корень репозитория:
+  tar --zstd -xf archives/obama_assets.tar.zst -C .
 
 Если файл отсутствует – сервис стартовать не будет.
 

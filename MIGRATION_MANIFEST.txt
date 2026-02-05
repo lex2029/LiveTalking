@@ -10,11 +10,24 @@ ernerf/obama_eo_torso/checkpoints/ngp.pth
 
 2) Данные для инференса (кастомные, без них не стартует)
 --------------------------------------------------------
-ernerf/data/obama/transforms_*.json
-ernerf/data/obama/au.csv
-ernerf/data/obama/bc.jpg
-ernerf/data/obama/gt_imgs/*.jpg
-ernerf/data/obama/torso_imgs/*.png
+Мелкие файлы (в git):
+  ernerf/data/obama/transforms_*.json
+  ernerf/data/obama/au.csv
+  ernerf/data/obama/bc.jpg
+
+Архив (в git, LFS):
+  archives/obama_assets.tar.zst
+
+Архив содержит и должен быть распакован в корень репозитория:
+  ernerf/data/obama/gt_imgs/
+  ernerf/data/obama/torso_imgs/
+  ernerf/data/obama/ori_imgs/
+  ernerf/data/obama/parsing/
+  ernerf/data/obama/openface/
+  ernerf/data/obama/aud_eo.npy
+  ernerf/data/obama/aud.wav
+  ernerf/data/obama/obama.mp4
+  ernerf/data/obama/track_params.pt
 
 3) Idle-клип
 -------------

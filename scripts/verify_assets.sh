@@ -3,6 +3,12 @@ set -euo pipefail
 
 fail=0
 
+archive_hint() {
+  if [ -f "archives/obama_assets.tar.zst" ]; then
+    echo "HINT: extract archives/obama_assets.tar.zst -> tar --zstd -xf archives/obama_assets.tar.zst -C ."
+  fi
+}
+
 check_file() {
   local path="$1"
   if [ ! -f "$path" ]; then
@@ -18,6 +24,7 @@ check_dir_count() {
   local expected="$2"
   if [ ! -d "$dir" ]; then
     echo "MISSING: $dir"
+    archive_hint
     fail=1
     return
   fi
