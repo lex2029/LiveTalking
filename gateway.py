@@ -451,6 +451,46 @@ async def config(request: web.Request) -> web.Response:
     )
 
 
+async def assemblyai_token(request: web.Request) -> web.Response:
+    try:
+        params = await request.json()
+    except Exception:
+        params = {}
+
+    profile = request.app.get("default_profile") or "default"
+    managers = _get_managers(request.app)
+    manager = managers.get(profile)
+    if not manager:
+        return web.Response(
+            status=400,
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": f"Unknown profile: {profile}"}),
+        )
+
+    # Prefer an existing worker; otherwise start one.
+    worker = None
+    for candidate in manager.workers_by_port.values():
+        if candidate.process.poll() is None:
+            worker = candidate
+            break
+    if worker is None and manager.ports:
+        worker = await manager.start_worker_at(manager.ports[0])
+        if worker:
+            await manager.wait_until_ready(worker)
+
+    if not worker:
+        return web.Response(
+            status=503,
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": "No worker available"}),
+        )
+
+    url = f"http://127.0.0.1:{worker.port}/assemblyai/token"
+    async with manager.client.post(url, json=params) as resp:
+        body = await resp.read()
+        return web.Response(status=resp.status, body=body, content_type=resp.content_type)
+
+
 async def record(request: web.Request) -> web.Response:
     params = await request.json()
     sessionid = int(params.get("sessionid", 0))
@@ -744,6 +784,7 @@ def main() -> None:
     app.router.add_post("/humanaudio", humanaudio)
     app.router.add_post("/set_audiotype", set_audiotype)
     app.router.add_post("/config", config)
+    app.router.add_post("/assemblyai/token", assemblyai_token)
     app.router.add_post("/webrtc_quality", webrtc_quality)
     app.router.add_post("/record", record)
     app.router.add_post("/is_speaking", is_speaking)
