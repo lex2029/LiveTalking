@@ -64,6 +64,8 @@ sudo mkdir -p /venv
 python3 -m venv /venv/nerfstream
 source /venv/nerfstream/bin/activate
 
+# Важно: стартовые скрипты используют /venv/nerfstream.
+
 # (опционально) symlink для IDE
 ln -sfn /venv/nerfstream .venv
 pip install --upgrade pip
