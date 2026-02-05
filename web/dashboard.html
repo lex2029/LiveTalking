@@ -6,100 +6,103 @@
     <title>LiveTalking — платформа общения с цифровым аватаром</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --primary-color: #4361ee;
-            --secondary-color: #3f37c9;
-            --accent-color: #4895ef;
-            --background-color: #f8f9fa;
-            --card-bg: #ffffff;
-            --text-color: #212529;
-            --border-radius: 10px;
-            --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            --bg: #f1f4f7;
+            --surface: #ffffff;
+            --surface-2: #f5f7fa;
+            --ink: #0d141a;
+            --muted: #5d6b79;
+            --accent: #18b26b;
+            --accent-dark: #0f8a52;
+            --hangup: #e5484d;
+            --hangup-dark: #c13a3d;
+            --border: rgba(14, 21, 33, 0.08);
+            --shadow: 0 24px 48px rgba(13, 20, 26, 0.12);
+            --shadow-soft: 0 8px 20px rgba(13, 20, 26, 0.12);
+            --radius-lg: 28px;
+            --radius: 20px;
+            --radius-sm: 14px;
+            --glass: rgba(255, 255, 255, 0.7);
+        }
+
+        * {
+            box-sizing: border-box;
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--background-color);
-            color: var(--text-color);
+            margin: 0;
+            font-family: 'Manrope', sans-serif;
+            color: var(--ink);
+            background:
+                radial-gradient(1200px 600px at 20% -10%, rgba(146, 227, 190, 0.35), transparent 60%),
+                radial-gradient(900px 600px at 100% 0%, rgba(148, 177, 255, 0.35), transparent 55%),
+                var(--bg);
             min-height: 100vh;
-            padding-top: 20px;
         }
 
-        .dashboard-container {
-            max-width: 1400px;
+        .app-shell {
+            max-width: 1200px;
             margin: 0 auto;
-            padding: 20px;
-        }
-
-        .card {
-            background-color: var(--card-bg);
-            border-radius: var(--border-radius);
-            box-shadow: var(--box-shadow);
-            border: none;
-            margin-bottom: 20px;
-            overflow: hidden;
-        }
-
-        .card-header {
-            background-color: var(--primary-color);
-            color: white;
-            font-weight: 600;
-            padding: 15px 20px;
-            border-bottom: none;
-        }
-
-        .video-container {
-            position: relative;
-            width: 100%;
-            background-color: #000;
-            border-radius: var(--border-radius);
-            overflow: hidden;
+            padding: 20px 16px 32px;
             display: flex;
-            justify-content: center;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .app-header {
+            display: flex;
+            flex-wrap: wrap;
             align-items: center;
+            justify-content: space-between;
+            gap: 12px;
         }
 
-        video {
-            max-width: 100%;
-            max-height: 100%;
-            display: block;
-            border-radius: var(--border-radius);
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
         }
 
-        .controls-container {
-            padding: 20px;
+        .brand-mark {
+            width: 46px;
+            height: 46px;
+            border-radius: 16px;
+            background: linear-gradient(135deg, #0f8a52, #21c27a);
+            color: #ffffff;
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            letter-spacing: 0.5px;
+            box-shadow: var(--shadow-soft);
         }
 
-        .btn-primary {
-            background-color: var(--primary-color);
-            border-color: var(--primary-color);
+        .brand-title {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 20px;
+            font-weight: 600;
         }
 
-        .btn-primary:hover {
-            background-color: var(--secondary-color);
-            border-color: var(--secondary-color);
+        .brand-subtitle {
+            font-size: 12px;
+            color: var(--muted);
         }
 
-        .btn-outline-primary {
-            color: var(--primary-color);
-            border-color: var(--primary-color);
-        }
-
-        .btn-outline-primary:hover {
-            background-color: var(--primary-color);
-            color: white;
-        }
-
-        .form-control {
-            border-radius: var(--border-radius);
-            padding: 10px 15px;
-            border: 1px solid #ced4da;
-        }
-
-        .form-control:focus {
-            border-color: var(--accent-color);
-            box-shadow: 0 0 0 0.25rem rgba(67, 97, 238, 0.25);
+        .status-strip {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            background: var(--glass);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            backdrop-filter: blur(8px);
+            box-shadow: var(--shadow-soft);
         }
 
         .status-indicator {
@@ -107,46 +110,167 @@
             height: 10px;
             border-radius: 50%;
             display: inline-block;
-            margin-right: 5px;
         }
 
         .status-connected {
-            background-color: #28a745;
+            background: #25c36b;
+            box-shadow: 0 0 0 4px rgba(37, 195, 107, 0.2);
         }
 
         .status-disconnected {
-            background-color: #dc3545;
+            background: #e5484d;
+            box-shadow: 0 0 0 4px rgba(229, 72, 77, 0.18);
         }
 
         .status-connecting {
-            background-color: #ffc107;
+            background: #f2b705;
+            box-shadow: 0 0 0 4px rgba(242, 183, 5, 0.2);
         }
 
-        .asr-container {
-            height: 300px;
-            overflow-y: auto;
-            padding: 15px;
-            background-color: #f8f9fa;
-            border-radius: var(--border-radius);
-            border: 1px solid #ced4da;
+        #status-text {
+            font-weight: 600;
+            font-size: 13px;
         }
 
-        .asr-text {
-            margin-bottom: 10px;
-            padding: 10px;
-            background-color: white;
-            border-radius: var(--border-radius);
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        .status-details {
+            font-size: 12px;
+            color: var(--muted);
         }
 
-        .user-message {
-            background-color: #e3f2fd;
-            border-left: 4px solid var(--primary-color);
+        .main-grid {
+            display: grid;
+            gap: 20px;
         }
 
-        .system-message {
-            background-color: #f1f8e9;
-            border-left: 4px solid #8bc34a;
+        @media (min-width: 980px) {
+            .main-grid {
+                grid-template-columns: 1.15fr 0.85fr;
+            }
+        }
+
+        .video-card,
+        .chat-card {
+            background: var(--surface);
+            border-radius: var(--radius-lg);
+            padding: 16px;
+            box-shadow: var(--shadow);
+        }
+
+        .video-card {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .video-stage {
+            position: relative;
+            border-radius: calc(var(--radius-lg) - 8px);
+            overflow: hidden;
+            background: #05080d;
+            aspect-ratio: 9 / 16;
+        }
+
+        @media (min-width: 980px) {
+            .video-stage {
+                aspect-ratio: 16 / 9;
+                min-height: 520px;
+            }
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .video-overlay {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 16px;
+            pointer-events: none;
+        }
+
+        .call-controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            pointer-events: auto;
+            margin-top: auto;
+        }
+
+        .call-btn {
+            border: none;
+            border-radius: 999px;
+            padding: 14px 22px;
+            font-weight: 600;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: var(--shadow-soft);
+        }
+
+        .call-btn--start {
+            background: linear-gradient(135deg, #19c476, #0f9157);
+            color: #ffffff;
+        }
+
+        .call-btn--start:hover {
+            filter: brightness(1.02);
+        }
+
+        .call-btn--stop {
+            background: linear-gradient(135deg, #ef5b5b, #cc3d3d);
+            color: #ffffff;
+        }
+
+        .mic-btn {
+            width: 54px;
+            height: 54px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.92);
+            color: #101418;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: var(--shadow-soft);
+            transition: transform 0.2s ease;
+        }
+
+        .mic-btn.is-listening {
+            background: #101418;
+            color: #ffffff;
+            transform: scale(1.02);
+        }
+
+        .mic-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: rgba(12, 18, 22, 0.6);
+            color: #ffffff;
+            font-size: 12px;
+            letter-spacing: 0.2px;
+        }
+
+        .mic-status .mic-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #9aa3ad;
+        }
+
+        .mic-status.is-live .mic-dot {
+            background: #1fd879;
+            box-shadow: 0 0 0 4px rgba(31, 216, 121, 0.35);
         }
 
         .recording-indicator {
@@ -175,269 +299,257 @@
             animation: blink 1s infinite;
         }
 
+        .timeout-alert {
+            background: #fff4d6;
+            border: 1px solid #f3d28d;
+            padding: 12px 14px;
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .hidden-controls {
+            display: none;
+        }
+
+        .chat-card {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            min-height: 50vh;
+        }
+
+        .chat-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .chat-title {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .chat-subtitle {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .asr-container {
+            flex: 1;
+            min-height: 260px;
+            max-height: 46vh;
+            overflow-y: auto;
+            padding: 12px;
+            background: var(--surface-2);
+            border-radius: var(--radius);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .asr-text {
+            padding: 12px 14px;
+            border-radius: 16px;
+            background: #ffffff;
+            box-shadow: 0 6px 16px rgba(12, 20, 26, 0.08);
+            max-width: 85%;
+        }
+
+        .asr-text .msg-meta {
+            font-size: 11px;
+            color: var(--muted);
+            margin-bottom: 4px;
+        }
+
+        .asr-text .msg-body {
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .user-message {
+            align-self: flex-end;
+            background: #e7f6ef;
+        }
+
+        .system-message {
+            align-self: flex-start;
+            background: #f7efe6;
+        }
+
+        .chat-input {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .chat-input textarea {
+            flex: 1;
+            resize: none;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            padding: 12px 14px;
+            font-size: 14px;
+            background: #ffffff;
+        }
+
+        .chat-input button {
+            border: none;
+            background: #101418;
+            color: #ffffff;
+            padding: 12px 16px;
+            border-radius: var(--radius-sm);
+            font-weight: 600;
+        }
+
+        .voice-record-label {
+            font-size: 12px;
+            color: var(--muted);
+            text-align: center;
+            margin-top: 8px;
+        }
+
+        .recording-pulse {
+            animation: pulse 1.5s infinite;
+        }
+
         @keyframes blink {
             0% { opacity: 1; }
             50% { opacity: 0.3; }
             100% { opacity: 1; }
         }
 
-        .mode-switch {
-            margin-bottom: 20px;
-        }
-
-        .nav-tabs .nav-link {
-            color: var(--text-color);
-            border: none;
-            padding: 10px 20px;
-            border-radius: var(--border-radius) var(--border-radius) 0 0;
-        }
-
-        .nav-tabs .nav-link.active {
-            color: var(--primary-color);
-            background-color: var(--card-bg);
-            border-bottom: 3px solid var(--primary-color);
-            font-weight: 600;
-        }
-
-        .tab-content {
-            padding: 20px;
-            background-color: var(--card-bg);
-            border-radius: 0 0 var(--border-radius) var(--border-radius);
-        }
-
-        .settings-panel {
-            padding: 15px;
-            background-color: #f8f9fa;
-            border-radius: var(--border-radius);
-            margin-top: 15px;
-        }
-
-        .footer {
-            text-align: center;
-            margin-top: 30px;
-            padding: 20px 0;
-            color: #6c757d;
-            font-size: 0.9rem;
-        }
-        
-        .voice-record-btn {
-            width: 60px;
-            height: 60px;
-            border-radius: 50%;
-            background-color: var(--primary-color);
-            color: white;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-            margin: 0 auto;
-        }
-        
-        .voice-record-btn:hover {
-            background-color: var(--secondary-color);
-            transform: scale(1.05);
-        }
-        
-        .voice-record-btn:active {
-            background-color: #dc3545;
-            transform: scale(0.95);
-        }
-        
-        .voice-record-btn i {
-            font-size: 24px;
-        }
-        
-        .voice-record-label {
-            text-align: center;
-            margin-top: 10px;
-            font-size: 14px;
-            color: #6c757d;
-        }
-        
-        .video-size-control {
-            margin-top: 15px;
-        }
-        
-        .recording-pulse {
-            animation: pulse 1.5s infinite;
-        }
-
-        .status-details {
-            font-size: 12px;
-            color: rgba(255, 255, 255, 0.88);
-            margin-left: 18px;
-            margin-top: 4px;
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-        }
-        
         @keyframes pulse {
             0% {
-                box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7);
+                box-shadow: 0 0 0 0 rgba(24, 178, 107, 0.6);
             }
             70% {
-                box-shadow: 0 0 0 15px rgba(220, 53, 69, 0);
+                box-shadow: 0 0 0 16px rgba(24, 178, 107, 0);
             }
             100% {
-                box-shadow: 0 0 0 0 rgba(220, 53, 69, 0);
+                box-shadow: 0 0 0 0 rgba(24, 178, 107, 0);
+            }
+        }
+
+        @media (max-width: 720px) {
+            .app-shell {
+                padding: 16px 14px 24px;
+            }
+
+            .chat-card {
+                min-height: 40vh;
+            }
+
+            .asr-container {
+                max-height: 34vh;
+            }
+
+            .call-btn {
+                padding: 12px 18px;
             }
         }
     </style>
 </head>
 <body>
-    <div class="dashboard-container">
-        <div class="row">
-            <div class="col-12">
-                <h1 class="text-center mb-4">LiveTalking — платформа общения с цифровым аватаром</h1>
+    <div class="app-shell">
+        <header class="app-header">
+            <div class="brand">
+                <div class="brand-mark">LT</div>
+                <div>
+                    <div class="brand-title">LiveAvatar</div>
+                    <div class="brand-subtitle">Премиальный AI‑мессенджер с видео</div>
+                </div>
             </div>
-        </div>
+            <div class="status-strip">
+                <span class="status-indicator status-disconnected" id="connection-status"></span>
+                <span id="status-text">Не подключено</span>
+                <span id="status-details" class="status-details"></span>
+            </div>
+        </header>
 
-        <div class="row">
-            <!-- 视频区域 -->
-            <div class="col-lg-8">
-                <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <div>
-                            <span class="status-indicator status-disconnected" id="connection-status"></span>
-                            <span id="status-text">Не подключено</span>
-                            <div id="status-details" class="status-details"></div>
-                        </div>
+        <main class="main-grid">
+            <section class="video-card">
+                <div class="video-stage">
+                    <video id="video" autoplay playsinline></video>
+                    <div class="recording-indicator" id="recording-indicator">
+                        <div class="blink"></div>
+                        <span>Идет запись</span>
                     </div>
-                    <div class="card-body p-0">
-                        <div class="video-container">
-                            <video id="video" autoplay playsinline></video>
-                            <div class="recording-indicator" id="recording-indicator">
-                                <div class="blink"></div>
-                                <span>Идет запись</span>
-                            </div>
+                    <div class="video-overlay">
+                        <div class="mic-status" id="mic-status">
+                            <span class="mic-dot"></span>
+                            <span id="mic-status-text">Микрофон выключен</span>
                         </div>
-                        
-                        <div class="controls-container">
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <button class="btn btn-primary w-100" id="start">
-                                        <i class="bi bi-play-fill"></i> Подключиться
-                                    </button>
-                                    <button class="btn btn-danger w-100" id="stop" style="display: none;">
-                                        <i class="bi bi-stop-fill"></i> Отключить
-                                    </button>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <div class="d-flex">
-                                        <button class="btn btn-outline-primary flex-grow-1 me-2" id="btn_start_record">
-                                            <i class="bi bi-record-fill"></i> Начать запись
-                                        </button>
-                                        <button class="btn btn-outline-danger flex-grow-1" id="btn_stop_record" disabled>
-                                            <i class="bi bi-stop-fill"></i> Остановить запись
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row">
-                                <div class="col-12">
-                                    <div class="alert alert-warning d-none" id="timeout-notice" role="alert">
-                                        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-                                            <span id="timeout-notice-text">Сессия завершена из‑за неактивности (60 секунд). Нажмите «Подключиться» или перезагрузите страницу.</span>
-                                            <button class="btn btn-warning btn-sm" id="reload-page" type="button">
-                                                <i class="bi bi-arrow-clockwise"></i> Перезагрузить страницу
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="row">
-                                <div class="col-12">
-                                    <div class="video-size-control">
-                                        <label for="video-size-slider" class="form-label">Размер видео: <span id="video-size-value">100%</span></label>
-                                        <input type="range" class="form-range" id="video-size-slider" min="50" max="150" value="100">
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div class="settings-panel mt-3">
-                                <div class="row">
-                                    <div class="col-md-6 mb-3">
-                                        <label for="profile-select" class="form-label">Режим модели</label>
-                                        <select class="form-select" id="profile-select">
-                                            <option value="head">Только голова (быстро)</option>
-                                            <option value="torso" disabled>Голова + торс (готовится)</option>
-                                        </select>
-                                    </div>
-                                    <div class="col-12">
-                                        <div class="form-text">Режим модели применяется при новом подключении.</div>
-                                    </div>
-                                </div>
-                            </div>
+                        <div class="call-controls">
+                            <button class="call-btn call-btn--start" id="start">
+                                <i class="bi bi-telephone-fill"></i> Позвонить
+                            </button>
+                            <button class="call-btn call-btn--stop" id="stop" style="display: none;">
+                                <i class="bi bi-telephone-x-fill"></i> Сбросить
+                            </button>
+                            <button class="mic-btn" id="voice-record-btn" title="Микрофон">
+                                <i class="bi bi-mic-fill"></i>
+                            </button>
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- 右侧交互 -->
-            <div class="col-lg-4">
-                <div class="card">
-                    <div class="card-header">
-                        <ul class="nav nav-tabs card-header-tabs" id="interaction-tabs" role="tablist">
-                            <li class="nav-item" role="presentation">
-                                <button class="nav-link active" id="chat-tab" data-bs-toggle="tab" data-bs-target="#chat" type="button" role="tab" aria-controls="chat" aria-selected="true">Диалог</button>
-                            </li>
-                            <li class="nav-item" role="presentation">
-                                <button class="nav-link" id="tts-tab" data-bs-toggle="tab" data-bs-target="#tts" type="button" role="tab" aria-controls="tts" aria-selected="false">Чтение</button>
-                            </li>
-                        </ul>
-                    </div>
-                    <div class="card-body">
-                        <div class="tab-content" id="interaction-tabs-content">
-                            <!-- Диалог -->
-                            <div class="tab-pane fade show active" id="chat" role="tabpanel" aria-labelledby="chat-tab">
-                                <div class="asr-container mb-3" id="chat-messages">
-                                    <div class="asr-text system-message">
-                                        Система: Добро пожаловать в LiveTalking. Нажмите «Подключиться», чтобы начать диалог.
-                                    </div>
-                                </div>
-                                
-                                <form id="chat-form">
-                                    <div class="input-group mb-3">
-                                        <textarea class="form-control" id="chat-message" rows="3" placeholder="Введите сообщение для аватара..."></textarea>
-                                        <button class="btn btn-primary" type="submit">
-                                            <i class="bi bi-send"></i> Отправить
-                                        </button>
-                                    </div>
-                                </form>
-                                
-                                <!-- 按住说话按钮 -->
-                                <div class="voice-record-btn" id="voice-record-btn">
-                                    <i class="bi bi-mic-fill"></i>
-                                </div>
-                                <div class="voice-record-label">Удерживайте, чтобы говорить; отпустите, чтобы отправить</div>
-                            </div>
-                            
-                            <!-- Чтение -->
-                            <div class="tab-pane fade" id="tts" role="tabpanel" aria-labelledby="tts-tab">
-                                <form id="echo-form">
-                                    <div class="mb-3">
-                                        <label for="message" class="form-label">Введите текст для озвучивания</label>
-                                        <textarea class="form-control" id="message" rows="6" placeholder="Введите текст, который нужно озвучить..."></textarea>
-                                    </div>
-                                    <button type="submit" class="btn btn-primary w-100">
-                                        <i class="bi bi-volume-up"></i> Озвучить текст
-                                    </button>
-                                </form>
-                            </div>
-                        </div>
+                <div class="timeout-alert d-none" id="timeout-notice" role="alert">
+                    <span id="timeout-notice-text">Сессия завершена из‑за неактивности. Нажмите «Позвонить» или перезагрузите страницу.</span>
+                    <button class="btn btn-outline-dark btn-sm" id="reload-page" type="button">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+
+                <div class="hidden-controls">
+                    <label for="profile-select">Режим модели</label>
+                    <select class="form-select" id="profile-select">
+                        <option value="head">Только голова (быстро)</option>
+                        <option value="torso" disabled>Голова + торс (готовится)</option>
+                    </select>
+                    <label for="video-size-slider">Размер видео</label>
+                    <input type="range" id="video-size-slider" min="50" max="150" value="100">
+                    <div id="video-size-value">100%</div>
+                    <button id="btn_start_record" type="button">Начать запись</button>
+                    <button id="btn_stop_record" type="button">Остановить запись</button>
+                    <form id="echo-form">
+                        <textarea id="message" rows="2"></textarea>
+                        <button type="submit">Озвучить</button>
+                    </form>
+                </div>
+            </section>
+
+            <section class="chat-card">
+                <div class="chat-header">
+                    <div>
+                        <div class="chat-title">Диалог</div>
+                        <div class="chat-subtitle">Ответы приходят сверху, история уходит вниз</div>
                     </div>
                 </div>
-            </div>
-        </div>
 
-        <div class="footer">
-            <p>Сделано с ❤️ Marstaos | Фронтенд и оптимизация производительности</p>
-        </div>
+                <div class="asr-container" id="chat-messages">
+                    <div class="asr-text system-message">
+                        <div class="msg-meta">Система</div>
+                        <div class="msg-body">Добро пожаловать в LiveTalking. Нажмите «Позвонить», чтобы начать диалог.</div>
+                    </div>
+                </div>
+
+                <form id="chat-form" class="chat-input">
+                    <textarea id="chat-message" rows="2" placeholder="Напишите сообщение для аватара..."></textarea>
+                    <button type="submit">
+                        <i class="bi bi-send-fill"></i>
+                    </button>
+                </form>
+
+                <div class="voice-record-label" id="mic-hint">Микрофон слушает постоянно. Нажмите на иконку, чтобы выключить.</div>
+            </section>
+        </main>
     </div>
 
-    <!-- 隐藏的会话ID -->
     <input type="hidden" id="sessionid" value="0">
 
 
@@ -512,26 +624,34 @@
 
             refreshProfiles();
 
-            // 添加聊天消息
+            // 添加聊天消息 (новые сверху)
             function addChatMessage(message, type = 'user') {
                 const messagesContainer = $('#chat-messages');
                 const messageClass = type === 'user' ? 'user-message' : 'system-message';
                 const sender = type === 'user' ? 'Вы' : 'Аватар';
-                
+                const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
                 const messageElement = $(`
                     <div class="asr-text ${messageClass}">
-                        ${sender}: ${message}
+                        <div class="msg-meta">${sender} • ${time}</div>
+                        <div class="msg-body">${message}</div>
                     </div>
                 `);
-                
-                messagesContainer.append(messageElement);
-                messagesContainer.scrollTop(messagesContainer[0].scrollHeight);
+
+                messagesContainer.prepend(messageElement);
+                if (messagesContainer.children().length > 60) {
+                    messagesContainer.children().last().remove();
+                }
+                messagesContainer.scrollTop(0);
             }
 
             // 开始/停止按钮
             $('#start').click(function() {
                 updateConnectionStatus('connecting');
                 markUserActivity();
+                pendingAutoMic = true;
+                autoMicEnabled = true;
+                startRecording(true);
                 start();
                 $(this).hide();
                 $('#stop').show();
@@ -556,6 +676,7 @@
 
             $('#stop').click(function() {
                 stop();
+                stopRecording('disconnect');
                 $(this).hide();
                 $('#start').show();
                 updateConnectionStatus('disconnected');
@@ -567,7 +688,7 @@
 
             // 录制功能
             $('#btn_start_record').click(function() {
-                console.log('Подключитьсяing recording...');
+                console.log('Recording start requested...');
                 fetch('/record', {
                     body: JSON.stringify({
                         type: 'start_record',
@@ -629,7 +750,7 @@
                     type: 'echo',
                     interrupt: true,
                     sessionid: parseInt(document.getElementById('sessionid').value),
-                }, 'Не удалось отправить запрос на озвучивание. Проверьте соединение и нажмите «Подключиться».');
+                }, 'Не удалось отправить запрос на озвучивание. Проверьте соединение и нажмите «Позвонить».');
                 
                 $('#message').val('');
                 addChatMessage(`Запрос на озвучивание отправлен: "${message}"`, 'system');
@@ -649,7 +770,7 @@
                     type: 'chat',
                     interrupt: true,
                     sessionid: parseInt(document.getElementById('sessionid').value),
-                }, 'Не удалось отправить сообщение. Проверьте соединение и нажмите «Подключиться».');
+                }, 'Не удалось отправить сообщение. Проверьте соединение и нажмите «Позвонить».');
                 
                 addChatMessage(message, 'user');
                 $('#chat-message').val('');
@@ -657,6 +778,9 @@
 
             // 按住说话功能
             let isRecording = false;
+            let autoMicEnabled = true;
+            let pendingAutoMic = false;
+            let turnActive = false;
             let lastUserMessageAt = Date.now();
             const idleTimeoutMs = 300000;
             let greetedSessionId = null;
@@ -677,10 +801,29 @@
                 $('#timeout-notice').addClass('d-none');
             }
 
+            function updateMicUI() {
+                const micBtn = $('#voice-record-btn');
+                const micStatus = $('#mic-status');
+                const micText = $('#mic-status-text');
+                const micHint = $('#mic-hint');
+                if (isRecording) {
+                    micBtn.addClass('is-listening recording-pulse');
+                    micStatus.addClass('is-live');
+                    micText.text('Микрофон слушает');
+                    micHint.text('Микрофон включен. Нажмите на иконку, чтобы выключить.');
+                } else {
+                    micBtn.removeClass('is-listening recording-pulse');
+                    micStatus.removeClass('is-live');
+                    micText.text('Микрофон выключен');
+                    micHint.text('Микрофон выключен. Нажмите на иконку, чтобы включить.');
+                }
+            }
+
             function onPeerDisconnected(state) {
                 idleTimerEnabled = false;
                 updateConnectionStatus('disconnected');
-                addChatMessage('Сессия завершена (соединение: ' + state + '). Нажмите «Подключиться», чтобы подключиться снова.', 'system');
+                addChatMessage('Сессия завершена (соединение: ' + state + '). Нажмите «Позвонить», чтобы подключиться снова.', 'system');
+                stopRecording('disconnect');
             }
             window.onPeerDisconnected = onPeerDisconnected;
 
@@ -695,7 +838,7 @@
                     if (response.ok) return response;
                     if (response.status === 410) {
                         onPeerDisconnected('session-expired');
-                        showTimeoutNotice('Сессия истекла или была перезапущена. Нажмите «Подключиться».');
+                        showTimeoutNotice('Сессия истекла или была перезапущена. Нажмите «Позвонить».');
                     } else {
                         addChatMessage(failMessage || 'Не удалось отправить запрос. Попробуйте переподключиться.', 'system');
                     }
@@ -733,8 +876,8 @@
                     if (Date.now() - lastUserMessageAt > idleTimeoutMs) {
                         stop();
                         updateConnectionStatus('disconnected');
-                        showTimeoutNotice('Сессия завершена из‑за неактивности (5 минут). Нажмите «Подключиться» или перезагрузите страницу.');
-                        addChatMessage('Сессия завершена из‑за неактивности (5 минут). Нажмите «Подключиться» или перезагрузите страницу.', 'system');
+                        showTimeoutNotice('Сессия завершена из‑за неактивности (5 минут). Нажмите «Позвонить» или перезагрузите страницу.');
+                        addChatMessage('Сессия завершена из‑за неактивности (5 минут). Нажмите «Позвонить» или перезагрузите страницу.', 'system');
                     }
                 }
             }, 5000);
@@ -900,13 +1043,18 @@
                 if (!trimmed) return;
                 if (trimmed === lastFinalTranscript) return;
                 lastFinalTranscript = trimmed;
+                const sid = parseInt(document.getElementById('sessionid').value || '0', 10);
+                if (!sid) {
+                    addChatMessage('Сначала нажмите «Позвонить», чтобы отправлять сообщения.', 'system');
+                    return;
+                }
                 markUserActivity();
                 postHuman({
                     text: trimmed,
                     type: 'chat',
                     interrupt: true,
-                    sessionid: parseInt(document.getElementById('sessionid').value),
-                }, 'Не удалось отправить распознанный текст. Проверьте соединение и нажмите «Подключиться».');
+                    sessionid: sid,
+                }, 'Не удалось отправить распознанный текст. Проверьте соединение и нажмите «Позвонить».');
                 addChatMessage(trimmed, 'user');
                 $('#chat-message').val('');
                 if (autoStop && isRecording) {
@@ -924,47 +1072,55 @@
                 if (message.type === 'Turn') {
                     const utterance = (message.utterance || '').trim();
                     const transcript = (message.transcript || '').trim();
-                    if (utterance) {
-                        lastTranscript = utterance;
-                        $('#chat-message').val(utterance);
-                    } else if (transcript) {
-                        lastTranscript = transcript;
-                        $('#chat-message').val(transcript);
+                    const activeText = utterance || transcript;
+                    if (activeText) {
+                        if (!turnActive) {
+                            turnActive = true;
+                            interruptAvatar();
+                        }
+                        lastTranscript = activeText;
+                        $('#chat-message').val(activeText);
                     }
                     if (message.end_of_turn) {
-                        finalizeTranscript(transcript || utterance || lastTranscript, true);
+                        turnActive = false;
+                        finalizeTranscript(transcript || utterance || lastTranscript, false);
                     }
                 }
             }
 
-            // 按住说话按钮事件
-            $('#voice-record-btn').on('mousedown touchstart', function(e) {
+            // Микрофон: постоянно слушает, кнопка = mute/unmute
+            $('#voice-record-btn').on('click', function(e) {
                 e.preventDefault();
-                startRecording();
-            }).on('mouseup mouseleave touchend', function() {
                 if (isRecording) {
+                    autoMicEnabled = false;
                     stopRecording('manual');
+                } else {
+                    autoMicEnabled = true;
+                    startRecording(false);
                 }
             });
 
-            async function startRecording() {
+            function ensureAutoMic() {
+                if (!autoMicEnabled || isRecording) return;
+                startRecording(true);
+            }
+
+            async function startRecording(auto) {
                 if (isRecording) return;
-                const sid = parseInt(document.getElementById('sessionid').value);
-                if (!sid) {
-                    alert('Сначала нажмите «Подключиться».');
-                    return;
-                }
 
                 isRecording = true;
                 lastTranscript = '';
                 lastFinalTranscript = '';
+                turnActive = false;
                 prebufferChunks = [];
                 prebufferBytes = 0;
                 assemblyReadyToSend = false;
+                pendingAutoMic = false;
                 if (pendingTerminateTimer) {
                     clearTimeout(pendingTerminateTimer);
                     pendingTerminateTimer = null;
                 }
+                updateMicUI();
 
                 try {
                     assemblyStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -972,12 +1128,12 @@
                     console.error('Нет доступа к микрофону:', error);
                     alert('Нет доступа к микрофону. Проверьте разрешения браузера.');
                     isRecording = false;
+                    updateMicUI();
+                    if (auto) {
+                        autoMicEnabled = false;
+                    }
                     return;
                 }
-
-                interruptAvatar();
-                $('#voice-record-btn').addClass('recording-pulse');
-                $('#voice-record-btn').css('background-color', '#dc3545');
 
                 let token;
                 try {
@@ -987,8 +1143,7 @@
                     addChatMessage('Не удалось получить токен AssemblyAI. Проверьте ключ и сервер.', 'system');
                     cleanupAssemblyAudio();
                     isRecording = false;
-                    $('#voice-record-btn').removeClass('recording-pulse');
-                    $('#voice-record-btn').css('background-color', '');
+                    updateMicUI();
                     return;
                 }
 
@@ -1019,10 +1174,9 @@
             function stopRecording(reason) {
                 if (!isRecording) return;
                 isRecording = false;
+                turnActive = false;
                 cleanupAssemblyAudio();
-
-                $('#voice-record-btn').removeClass('recording-pulse');
-                $('#voice-record-btn').css('background-color', '');
+                updateMicUI();
 
                 if (assemblySocket && assemblySocket.readyState === WebSocket.OPEN) {
                     try {
@@ -1063,6 +1217,8 @@
                     idleTimerEnabled = true;
                     markUserActivity();
                     sendGreetingOnce();
+                    ensureAutoMic();
+                    updateMicUI();
                     if (originalOnConnected) originalOnConnected();
                 };
             } else {
@@ -1071,12 +1227,15 @@
                     idleTimerEnabled = true;
                     markUserActivity();
                     sendGreetingOnce();
+                    ensureAutoMic();
+                    updateMicUI();
                 };
             }
 
             // Срабатывает после получения sessionid
             window.onSessionReady = function() {
                 sendGreetingOnce();
+                ensureAutoMic();
             };
 
             window.onWebRTCStats = function(info) {
@@ -1094,12 +1253,14 @@
                 window.onWebRTCDisconnected = function() {
                     updateConnectionStatus('disconnected');
                     idleTimerEnabled = false;
+                    stopRecording('disconnect');
                     if (originalOnDisconnected) originalOnDisconnected();
                 };
             } else {
                 window.onWebRTCDisconnected = function() {
                     updateConnectionStatus('disconnected');
                     idleTimerEnabled = false;
+                    stopRecording('disconnect');
                 };
             }
 
@@ -1125,6 +1286,8 @@
                     console.error('Ошибка WebRTC-воспроизведения:', reason);
                 });
             }
+
+            updateMicUI();
         });
     </script>
 </body>
