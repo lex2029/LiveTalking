@@ -32,6 +32,7 @@ class Worker:
     sessionid: Optional[int] = None
     log_path: Optional[Path] = None
     ready: bool = False
+    ready_task: Optional[asyncio.Task] = None
     log_fp = None
 
 
@@ -49,6 +50,8 @@ class WorkerManager:
         self.idle_timeout = idle_timeout
         self.env = env
         self.startup_timeout = startup_timeout
+        self.startup_stagger = float(os.getenv("WORKER_STARTUP_STAGGER", "0"))
+        self.wait_timeout = int(os.getenv("WORKER_WAIT_TIMEOUT", "600"))
         self.workers_by_port: Dict[int, Worker] = {}
         self.session_map: Dict[int, Worker] = {}
         self.client: Optional[aiohttp.ClientSession] = None
@@ -76,6 +79,11 @@ class WorkerManager:
             del self.session_map[worker.sessionid]
         if worker.port in self.workers_by_port:
             del self.workers_by_port[worker.port]
+        if worker.ready_task and not worker.ready_task.done():
+            current = asyncio.current_task()
+            if current is None or worker.ready_task is not current:
+                worker.ready_task.cancel()
+        worker.ready = False
 
         proc = worker.process
         if proc.poll() is None:
@@ -121,9 +129,36 @@ class WorkerManager:
                 await asyncio.sleep(0.3)
         return False
 
+    async def _monitor_ready(self, worker: Worker) -> None:
+        if not self.client:
+            return
+        url = f"http://127.0.0.1:{worker.port}/health"
+        start_time = time.time()
+        warned = False
+        while True:
+            if worker.process.poll() is not None:
+                await self.stop_worker(worker, reason="crash")
+                return
+            try:
+                async with self.client.get(url) as resp:
+                    if resp.status == 200:
+                        worker.ready = True
+                        elapsed = time.time() - start_time
+                        print(f"[gateway] worker {worker.port} ready in {elapsed:.1f}s", flush=True)
+                        return
+            except Exception:
+                pass
+            elapsed = time.time() - start_time
+            if self.startup_timeout > 0 and not warned and elapsed >= self.startup_timeout:
+                warned = True
+                print(f"[gateway] worker {worker.port} still starting after {int(elapsed)}s", flush=True)
+            await asyncio.sleep(0.5)
+
     async def start_worker_at(self, port: int) -> Optional[Worker]:
         existing = self.workers_by_port.get(port)
         if existing and existing.process.poll() is None:
+            if not existing.ready and existing.ready_task is None:
+                existing.ready_task = asyncio.create_task(self._monitor_ready(existing))
             return existing
         if existing:
             await self.stop_worker(existing, reason="restart")
@@ -154,16 +189,14 @@ class WorkerManager:
         self.workers_by_port[port] = worker
         print(f"[gateway] starting worker on port {port} (pid={proc.pid})", flush=True)
 
-        ready = await self.wait_ready(port)
-        if not ready or proc.poll() is not None:
-            await self.stop_worker(worker, reason="startup-failed")
-            return None
-        worker.ready = True
+        worker.ready_task = asyncio.create_task(self._monitor_ready(worker))
         return worker
 
     async def start_all_workers(self) -> None:
         for port in self.ports:
             await self.start_worker_at(port)
+            if self.startup_stagger > 0:
+                await asyncio.sleep(self.startup_stagger)
 
     def get_free_worker(self) -> Optional[Worker]:
         for worker in self.workers_by_port.values():
@@ -171,7 +204,15 @@ class WorkerManager:
                 return worker
         return None
 
-    async def wait_for_free_worker(self, timeout: int = 60) -> Optional[Worker]:
+    def has_starting_workers(self) -> bool:
+        for worker in self.workers_by_port.values():
+            if worker.process.poll() is None and not worker.ready:
+                return True
+        return False
+
+    async def wait_for_free_worker(self, timeout: Optional[int] = None) -> Optional[Worker]:
+        if timeout is None:
+            timeout = self.wait_timeout
         deadline = time.time() + timeout
         while time.time() < deadline:
             worker = self.get_free_worker()
@@ -238,10 +279,13 @@ async def offer(request: web.Request) -> web.Response:
 
     worker = await manager.wait_for_free_worker()
     if not worker:
+        msg = "No available worker"
+        if manager.has_starting_workers():
+            msg = "Workers are warming up, please retry shortly"
         return web.Response(
             status=503,
             content_type="application/json",
-            text=json.dumps({"code": -1, "msg": "No available worker"}),
+            text=json.dumps({"code": -1, "msg": msg}),
         )
 
     url = f"http://127.0.0.1:{worker.port}/offer"
@@ -287,10 +331,13 @@ async def daily_start(request: web.Request) -> web.Response:
 
     worker = await manager.wait_for_free_worker()
     if not worker:
+        msg = "No available worker"
+        if manager.has_starting_workers():
+            msg = "Workers are warming up, please retry shortly"
         return web.Response(
             status=503,
             content_type="application/json",
-            text=json.dumps({"code": -1, "msg": "No available worker"}),
+            text=json.dumps({"code": -1, "msg": msg}),
         )
 
     url = f"http://127.0.0.1:{worker.port}/daily/start"
@@ -631,6 +678,7 @@ def main() -> None:
     args = parser.parse_args()
 
     env = os.environ.copy()
+    startup_timeout = int(os.getenv("WORKER_STARTUP_TIMEOUT", "180"))
     profiles_file = args.profiles_file.strip()
     if profiles_file:
         profiles_cfg, default_profile = _load_profiles_file(_resolve_path(profiles_file))
@@ -646,6 +694,7 @@ def main() -> None:
                 ports=ports,
                 idle_timeout=args.idle_timeout,
                 env=env,
+                startup_timeout=startup_timeout,
             )
         manager = None
     else:
@@ -660,6 +709,7 @@ def main() -> None:
             ports=ports,
             idle_timeout=args.idle_timeout,
             env=env,
+            startup_timeout=startup_timeout,
         )
 
     app = web.Application()

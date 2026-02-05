@@ -44,6 +44,9 @@ cp /workspace/LiveTalking/daily.example.env /workspace/LiveTalking/daily.env
 - `DAILY_VIDEO_QUALITY`, `DAILY_VIDEO_CODEC` (опционально)
 - `DAILY_QUALITY_AUTO` (1/0), `DAILY_QUALITY_INTERVAL`, `DAILY_QUALITY_*_STREAK` — авто‑адаптация качества
 - `DAILY_AUDIO_QUEUE`, `DAILY_AUDIO_MAX_BACKLOG` — очередь аудио для ровного тайминга
+- `WORKER_STARTUP_TIMEOUT` — через сколько секунд писать warning при долгом прогреве
+- `WORKER_STARTUP_STAGGER` — пауза между стартами воркеров (сек), чтобы не было GPU‑пиков
+- `WORKER_WAIT_TIMEOUT` — сколько ждать свободного воркера при старте сессии (сек)
 
 > `daily.env` уже в `.gitignore`.
 
