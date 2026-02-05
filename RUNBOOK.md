@@ -61,6 +61,10 @@ cp /workspace/LiveTalking/daily.example.env /workspace/LiveTalking/daily.env
 - `/workspace/LiveTalking/gateway.log`
 - `/workspace/LiveTalking/logs/worker-8091.log` (и т.д.)
 
+Автозапуск после ребута:
+- Скрипт: `/workspace/LiveTalking/scripts/autostart_liveavatar.sh`
+- Cron (root): `@reboot /workspace/LiveTalking/scripts/autostart_liveavatar.sh`
+
 ## 5) Веб‑интерфейс
 Открывать:
 - локально: `http://127.0.0.1:8090/dashboard.html`
