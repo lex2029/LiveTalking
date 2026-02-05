@@ -5,7 +5,7 @@
       "label": "Только голова (быстро)",
       "worker_args_file": "worker_args_head.json",
       "base_port": 8091,
-      "max_workers": 5,
+      "max_workers": 10,
       "ready_check": "ernerf/obama_eo_head/checkpoints/ngp.pth"
     },
     "torso": {

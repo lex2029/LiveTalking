@@ -209,9 +209,7 @@ class WorkerManager:
 
     async def start_all_workers(self) -> None:
         for port in self.ports:
-            worker = await self.start_worker_at(port)
-            if worker:
-                await self.wait_until_ready(worker, timeout=self.startup_timeout)
+            await self.start_worker_at(port)
             if self.startup_stagger > 0:
                 await asyncio.sleep(self.startup_stagger)
 
