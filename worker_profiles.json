@@ -13,7 +13,7 @@
       "worker_args_file": "worker_args_torso.json",
       "base_port": 8101,
       "max_workers": 1,
-      "ready_check": "ernerf/obama_eo_torso/checkpoints/ngp_ep0028.pth"
+      "ready_check": "ernerf/obama_eo_torso/checkpoints/ngp.pth"
     }
   }
 }
