@@ -24,11 +24,18 @@ ernerf/obama_eo_head/
 !ernerf/obama_eo_head/checkpoints/ngp.pth
 ernerf/obama_eo_head/checkpoints/ngp_ep*.pth
 ernerf/obama_eo_head/log_ngp.txt
+ernerf/obama_eo_head/opt.txt
+ernerf/obama_eo_head/run/
+ernerf/obama_eo_head/validation/
 ernerf/obama_eo_torso/
 !ernerf/obama_eo_torso/
 !ernerf/obama_eo_torso/checkpoints/
 !ernerf/obama_eo_torso/checkpoints/ngp.pth
 ernerf/obama_eo_torso/checkpoints/ngp_ep*.pth
+ernerf/obama_eo_torso/log_ngp.txt
+ernerf/obama_eo_torso/opt.txt
+ernerf/obama_eo_torso/run/
+ernerf/obama_eo_torso/validation/
 
 !ernerf/data/
 !ernerf/data/obama/
