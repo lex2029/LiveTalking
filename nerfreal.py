@@ -391,7 +391,13 @@ class NeRFReal(BaseReal):
                 if daily_sender is not None and hasattr(daily_sender, "config"):
                     target_fps = getattr(daily_sender.config, "fps", 25) or 25
                 frame_period = 1.0 / float(target_fps)
-                delay = _starttime + _totalframe * frame_period - time.perf_counter()
+                now = time.perf_counter()
+                delay = _starttime + _totalframe * frame_period - now
+                # If we fall too far behind (e.g. first TTS chunk stalls), don't "catch up"
+                # by running faster than real time. Resync to avoid sped-up speech.
+                if delay < -frame_period * 2:
+                    _starttime = now - _totalframe * frame_period
+                    delay = 0.0
                 if delay > 0:
                     time.sleep(delay)
             elif video_track is not None:
