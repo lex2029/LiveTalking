@@ -35,7 +35,7 @@ import soundfile as sf
 import av
 from fractions import Fraction
 
-from ttsreal import EdgeTTS,SovitsTTS,XTTS,CosyVoiceTTS,FishTTS,TencentTTS,ElevenLabsTTS,OpenAITTS
+from ttsreal import EdgeTTS,SovitsTTS,XTTS,CosyVoiceTTS,FishTTS,TencentTTS,OpenAITTS
 from logger import logger
 
 from tqdm import tqdm
@@ -69,18 +69,6 @@ class BaseReal:
             self.openai_tts_sample_rate = int(os.getenv("OPENAI_TTS_SAMPLE_RATE", opt.openai_tts_sample_rate if hasattr(opt, "openai_tts_sample_rate") else 24000))
         except Exception:
             self.openai_tts_sample_rate = 24000
-        self.eleven_api_key = os.getenv("ELEVEN_API_KEY", "")
-        self.eleven_voice_id = os.getenv("ELEVEN_VOICE_ID", opt.eleven_voice if hasattr(opt, "eleven_voice") else "")
-        self.eleven_model_id = os.getenv("ELEVEN_MODEL_ID", opt.eleven_model if hasattr(opt, "eleven_model") else "eleven_turbo_v2")
-        self.eleven_output_format = os.getenv("ELEVEN_OUTPUT_FORMAT", opt.eleven_output_format if hasattr(opt, "eleven_output_format") else "pcm_16000")
-        self.eleven_optimize_latency = int(os.getenv("ELEVEN_OPTIMIZE_LATENCY", opt.eleven_optimize_latency if hasattr(opt, "eleven_optimize_latency") else 1))
-        try:
-            speed_env = os.getenv("ELEVEN_SPEED", "")
-            speed_opt = opt.eleven_speed if hasattr(opt, "eleven_speed") else None
-            self.eleven_speed = float(speed_env) if speed_env else (float(speed_opt) if speed_opt is not None else None)
-        except Exception:
-            self.eleven_speed = None
-
         if opt.tts == "edgetts":
             self.tts = EdgeTTS(opt,self)
         elif opt.tts == "gpt-sovits":
@@ -93,8 +81,6 @@ class BaseReal:
             self.tts = FishTTS(opt,self)
         elif opt.tts == "tencent":
             self.tts = TencentTTS(opt,self)
-        elif opt.tts == "elevenlabs":
-            self.tts = ElevenLabsTTS(opt,self)
         elif opt.tts == "openai":
             self.tts = OpenAITTS(opt,self)
         

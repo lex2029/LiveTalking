@@ -9,9 +9,11 @@
 - Gateway: `/workspace/LiveTalking/gateway.py` слушает **8090**, старт через `./start_gateway.sh`.
 - Медиа‑доставка: **Daily** (бот публикует аудио/видео в Daily‑комнату).
 - Профили воркеров: `/workspace/LiveTalking/worker_profiles.json`.
-  - `head`: 10 воркеров, порты **8091–8100**, готов при наличии `ernerf/obama_eo_head/checkpoints/ngp.pth`.
-  - `torso`: 1 воркер, порт **8101**, готов при наличии `ernerf/obama_eo_torso/checkpoints/ngp.pth`.
+  - `head`: **1 воркер**, порт **8091**, готов при наличии `ernerf/obama_eo_head/checkpoints/ngp.pth`.
+  - `torso`: **0 воркеров** (отключено), порт **8101**, готов при наличии `ernerf/obama_eo_torso/checkpoints/ngp.pth`.
+  - Чтобы увеличить/уменьшить число воркеров — меняй `max_workers` в `worker_profiles.json`.
 - Таймаут бездействия: **300 секунд** после последнего сообщения; сессия сбрасывается, воркер остаётся тёплым.
+- TTS: по умолчанию `edgetts`. Доступные: `edgetts`, `openai`, `gpt-sovits`, `xtts`, `cosyvoice`, `fishtts`, `tencent` (меняется через `--tts` в worker args).
 - UI: Daily управляет транспортом; переключение профиля модели требует **переподключения**.
 
 ## 2) Установка и зависимости
@@ -31,7 +33,6 @@ cp /workspace/LiveTalking/keys.example.json /workspace/LiveTalking/keys.json
 ```
 Заполнить:
 - `openai_key`, `openai_base`, `openai_model`
-- `eleven_key`, `eleven_voice`, `eleven_model`, `eleven_latency`, `eleven_output_format`, `eleven_speed`
 
 ### 3.2 `daily.env`
 ```bash

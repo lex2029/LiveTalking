@@ -154,12 +154,6 @@ _default_config = {
     "openai_tts_speed": None,
     "openai_tts_sample_rate": None,
     "assemblyai_key": "",
-    "eleven_key": "",
-    "eleven_voice": "",
-    "eleven_model": "",
-    "eleven_latency": None,
-    "eleven_output_format": "",
-    "eleven_speed": None,
 }
 
 # WebRTC quality presets (bitrate in bps).
@@ -355,12 +349,6 @@ def _load_secrets(path: str):
     openai_tts_speed = data.get("openai_tts_speed", data.get("OPENAI_TTS_SPEED"))
     openai_tts_sample_rate = data.get("openai_tts_sample_rate", data.get("OPENAI_TTS_SAMPLE_RATE"))
     assemblyai_key = _pick("assemblyai_key", "assemblyai_api_key", "ASSEMBLYAI_API_KEY")
-    eleven_key = _pick("eleven_key", "eleven_api_key", "ELEVEN_API_KEY")
-    eleven_voice = _pick("eleven_voice", "eleven_voice_id", "ELEVEN_VOICE_ID")
-    eleven_model = _pick("eleven_model", "eleven_model_id", "ELEVEN_MODEL_ID")
-    eleven_latency = data.get("eleven_latency", data.get("eleven_optimize_latency"))
-    eleven_output_format = _pick("eleven_output_format", "ELEVEN_OUTPUT_FORMAT")
-    eleven_speed = data.get("eleven_speed", data.get("eleven_voice_speed"))
 
     if openai_key:
         _default_config["openai_key"] = openai_key
@@ -386,24 +374,6 @@ def _load_secrets(path: str):
             pass
     if assemblyai_key:
         _default_config["assemblyai_key"] = assemblyai_key
-    if eleven_key:
-        _default_config["eleven_key"] = eleven_key
-    if eleven_voice:
-        _default_config["eleven_voice"] = eleven_voice
-    if eleven_model:
-        _default_config["eleven_model"] = eleven_model
-    if eleven_output_format:
-        _default_config["eleven_output_format"] = eleven_output_format
-    if eleven_latency is not None:
-        try:
-            _default_config["eleven_latency"] = int(eleven_latency)
-        except Exception:
-            pass
-    if eleven_speed is not None:
-        try:
-            _default_config["eleven_speed"] = float(eleven_speed)
-        except Exception:
-            pass
         
 
 #####webrtc###############################
@@ -450,18 +420,6 @@ def build_nerfreal(sessionid:int)->BaseReal:
         nerfreal.openai_tts_speed = _default_config["openai_tts_speed"]
     if _default_config.get("openai_tts_sample_rate") is not None:
         nerfreal.openai_tts_sample_rate = _default_config["openai_tts_sample_rate"]
-    if _default_config.get("eleven_key"):
-        nerfreal.eleven_api_key = _default_config["eleven_key"]
-    if _default_config.get("eleven_voice"):
-        nerfreal.eleven_voice_id = _default_config["eleven_voice"]
-    if _default_config.get("eleven_model"):
-        nerfreal.eleven_model_id = _default_config["eleven_model"]
-    if _default_config.get("eleven_output_format"):
-        nerfreal.eleven_output_format = _default_config["eleven_output_format"]
-    if _default_config.get("eleven_latency") is not None:
-        nerfreal.eleven_optimize_latency = _default_config["eleven_latency"]
-    if _default_config.get("eleven_speed") is not None:
-        nerfreal.eleven_speed = _default_config["eleven_speed"]
     return nerfreal
 
 def _daily_domain() -> str:
@@ -798,40 +756,6 @@ async def config(request):
     if 'assemblyai_key' in params:
         value = (params.get('assemblyai_key') or "").strip()
         _default_config["assemblyai_key"] = value
-
-    # ElevenLabs settings
-    if 'eleven_key' in params:
-        value = (params.get('eleven_key') or "").strip()
-        _default_config["eleven_key"] = value
-        if nerfreal:
-            nerfreal.eleven_api_key = value
-    if 'eleven_voice' in params:
-        value = (params.get('eleven_voice') or "").strip()
-        _default_config["eleven_voice"] = value
-        if nerfreal:
-            nerfreal.eleven_voice_id = value
-    if 'eleven_model' in params:
-        model_id = (params.get('eleven_model') or "").strip()
-        if model_id:
-            _default_config["eleven_model"] = model_id
-            if nerfreal:
-                nerfreal.eleven_model_id = model_id
-    if 'eleven_latency' in params:
-        try:
-            value = int(params.get('eleven_latency'))
-            _default_config["eleven_latency"] = value
-            if nerfreal:
-                nerfreal.eleven_optimize_latency = value
-        except Exception:
-            pass
-    if 'eleven_speed' in params:
-        try:
-            value = float(params.get('eleven_speed'))
-            _default_config["eleven_speed"] = value
-            if nerfreal:
-                nerfreal.eleven_speed = value
-        except Exception:
-            pass
 
     return web.Response(
         content_type="application/json",
@@ -1211,7 +1135,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--customvideo_config', type=str, default='')
 
-    parser.add_argument('--tts', type=str, default='edgetts') #xtts gpt-sovits cosyvoice
+    parser.add_argument('--tts', type=str, default='edgetts') # edgetts | openai | gpt-sovits | xtts | cosyvoice | fishtts | tencent
     parser.add_argument('--REF_FILE', type=str, default=None)
     parser.add_argument('--REF_TEXT', type=str, default=None)
     parser.add_argument('--TTS_SERVER', type=str, default='http://127.0.0.1:9880') # http://localhost:9000
@@ -1222,11 +1146,6 @@ if __name__ == '__main__':
     parser.add_argument('--openai_tts_sample_rate', type=int, default=24000)
     parser.add_argument('--openai_base', type=str, default='')
     parser.add_argument('--openai_model', type=str, default='gpt-4o-mini')
-    parser.add_argument('--eleven_voice', type=str, default='')
-    parser.add_argument('--eleven_model', type=str, default='eleven_turbo_v2')
-    parser.add_argument('--eleven_output_format', type=str, default='pcm_16000')
-    parser.add_argument('--eleven_optimize_latency', type=int, default=1)
-    parser.add_argument('--eleven_speed', type=float, default=None)
     parser.add_argument('--secrets', type=str, default='/workspace/LiveTalking/keys.json', help='path to JSON secrets file')
     # parser.add_argument('--CHARACTER', type=str, default='test')
     # parser.add_argument('--EMOTION', type=str, default='default')
