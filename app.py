@@ -153,6 +153,7 @@ _default_config = {
     "openai_tts_format": "",
     "openai_tts_speed": None,
     "openai_tts_sample_rate": None,
+    "assemblyai_key": "",
     "eleven_key": "",
     "eleven_voice": "",
     "eleven_model": "",
@@ -353,6 +354,7 @@ def _load_secrets(path: str):
     openai_tts_format = _pick("openai_tts_format", "OPENAI_TTS_FORMAT")
     openai_tts_speed = data.get("openai_tts_speed", data.get("OPENAI_TTS_SPEED"))
     openai_tts_sample_rate = data.get("openai_tts_sample_rate", data.get("OPENAI_TTS_SAMPLE_RATE"))
+    assemblyai_key = _pick("assemblyai_key", "assemblyai_api_key", "ASSEMBLYAI_API_KEY")
     eleven_key = _pick("eleven_key", "eleven_api_key", "ELEVEN_API_KEY")
     eleven_voice = _pick("eleven_voice", "eleven_voice_id", "ELEVEN_VOICE_ID")
     eleven_model = _pick("eleven_model", "eleven_model_id", "ELEVEN_MODEL_ID")
@@ -382,6 +384,8 @@ def _load_secrets(path: str):
             _default_config["openai_tts_sample_rate"] = int(openai_tts_sample_rate)
         except Exception:
             pass
+    if assemblyai_key:
+        _default_config["assemblyai_key"] = assemblyai_key
     if eleven_key:
         _default_config["eleven_key"] = eleven_key
     if eleven_voice:
@@ -770,6 +774,9 @@ async def config(request):
                 nerfreal.openai_tts_sample_rate = value
         except Exception:
             pass
+    if 'assemblyai_key' in params:
+        value = (params.get('assemblyai_key') or "").strip()
+        _default_config["assemblyai_key"] = value
 
     # ElevenLabs settings
     if 'eleven_key' in params:
@@ -808,6 +815,66 @@ async def config(request):
     return web.Response(
         content_type="application/json",
         text=json.dumps({"code": 0, "data": "ok"}),
+    )
+
+
+async def assemblyai_token(request):
+    key = (_default_config.get("assemblyai_key") or "").strip()
+    if not key:
+        return web.Response(
+            status=400,
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": "AssemblyAI key not configured"}),
+        )
+
+    try:
+        params = await request.json()
+    except Exception:
+        params = {}
+
+    expires = params.get("expires_in_seconds", 120)
+    try:
+        expires = int(expires)
+    except Exception:
+        expires = 120
+    expires = max(60, min(expires, 3600))
+
+    url = f"https://streaming.assemblyai.com/v3/token?expires_in_seconds={expires}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers={"Authorization": key}) as resp:
+                raw = await resp.text()
+                if resp.status != 200:
+                    return web.Response(
+                        status=resp.status,
+                        content_type="application/json",
+                        text=json.dumps({"code": -1, "msg": "AssemblyAI token request failed", "detail": raw}),
+                    )
+                data = json.loads(raw)
+    except Exception as e:
+        return web.Response(
+            status=500,
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": f"AssemblyAI token error: {e}"}),
+        )
+
+    token = data.get("token") or data.get("temporary_token")
+    if not token:
+        return web.Response(
+            status=500,
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": "AssemblyAI token missing"}),
+        )
+
+    return web.Response(
+        content_type="application/json",
+        text=json.dumps(
+            {
+                "code": 0,
+                "token": token,
+                "expires_in_seconds": data.get("expires_in_seconds", expires),
+            }
+        ),
     )
 
 
@@ -1211,6 +1278,7 @@ if __name__ == '__main__':
     appasync.router.add_post("/humanaudio", humanaudio)
     appasync.router.add_post("/set_audiotype", set_audiotype)
     appasync.router.add_post("/config", config)
+    appasync.router.add_post("/assemblyai/token", assemblyai_token)
     appasync.router.add_post("/webrtc_quality", webrtc_quality)
     appasync.router.add_post("/record", record)
     appasync.router.add_post("/is_speaking", is_speaking)

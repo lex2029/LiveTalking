@@ -656,10 +656,7 @@
             });
 
             // 按住说话功能
-            let mediaRecorder;
-            let audioChunks = [];
             let isRecording = false;
-            let recognition;
             let lastUserMessageAt = Date.now();
             const idleTimeoutMs = 300000;
             let greetedSessionId = null;
@@ -742,114 +739,284 @@
                 }
             }, 5000);
             
-            // 检查浏览器是否支持语音识别
-            const isSpeechRecognitionSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
-            
-            if (isSpeechRecognitionSupported) {
-                recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-                recognition.continuous = true;
-                recognition.interimResults = true;
-                recognition.lang = 'ru-RU';
-                
-                recognition.onresult = function(event) {
-                    let interimTranscript = '';
-                    let finalTranscript = '';
-                    
-                    for (let i = event.resultIndex; i < event.results.length; ++i) {
-                        if (event.results[i].isFinal) {
-                            finalTranscript += event.results[i][0].transcript;
-                        } else {
-                            interimTranscript += event.results[i][0].transcript;
-                            $('#chat-message').val(interimTranscript);
-                        }
-                    }
-                    
-                    if (finalTranscript) {
-                        $('#chat-message').val(finalTranscript);
-                    }
-                };
-                
-                recognition.onerror = function(event) {
-                    console.error('Ошибка распознавания речи:', event.error);
-                };
+            let assemblySocket = null;
+            let assemblyStream = null;
+            let assemblyAudioContext = null;
+            let assemblyProcessor = null;
+            let assemblySource = null;
+            let assemblyZeroGain = null;
+            let assemblyToken = null;
+            let assemblyTokenExpiresAt = 0;
+            let lastTranscript = '';
+            let lastFinalTranscript = '';
+            let pendingTerminateTimer = null;
+
+            function interruptAvatar() {
+                const sid = parseInt(document.getElementById('sessionid').value);
+                if (!sid) return;
+                postHuman({
+                    text: '',
+                    type: 'echo',
+                    interrupt: true,
+                    sessionid: sid,
+                });
             }
-            
+
+            function fetchAssemblyToken() {
+                if (assemblyToken && Date.now() < assemblyTokenExpiresAt - 5000) {
+                    return Promise.resolve(assemblyToken);
+                }
+                return fetch('/assemblyai/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ expires_in_seconds: 120 }),
+                }).then(function(response) {
+                    if (!response.ok) {
+                        throw new Error('AssemblyAI token request failed');
+                    }
+                    return response.json();
+                }).then(function(data) {
+                    if (!data.token) {
+                        throw new Error('AssemblyAI token missing');
+                    }
+                    assemblyToken = data.token;
+                    assemblyTokenExpiresAt = Date.now() + (data.expires_in_seconds || 60) * 1000;
+                    return assemblyToken;
+                });
+            }
+
+            function buildAssemblyUrl(token) {
+                const url = new URL('wss://streaming.assemblyai.com/v3/ws');
+                url.searchParams.set('sample_rate', '16000');
+                url.searchParams.set('format_turns', 'false');
+                url.searchParams.set('end_of_turn_confidence_threshold', '0.55');
+                url.searchParams.set('vad_threshold', '0.5');
+                url.searchParams.set('token', token);
+                return url.toString();
+            }
+
+            function downsampleBuffer(buffer, inputSampleRate, outputSampleRate) {
+                if (outputSampleRate >= inputSampleRate) {
+                    return buffer;
+                }
+                const sampleRateRatio = inputSampleRate / outputSampleRate;
+                const newLength = Math.round(buffer.length / sampleRateRatio);
+                const result = new Float32Array(newLength);
+                let offsetResult = 0;
+                let offsetBuffer = 0;
+                while (offsetResult < result.length) {
+                    const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+                    let accum = 0;
+                    let count = 0;
+                    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+                        accum += buffer[i];
+                        count++;
+                    }
+                    result[offsetResult] = accum / count;
+                    offsetResult++;
+                    offsetBuffer = nextOffsetBuffer;
+                }
+                return result;
+            }
+
+            function floatTo16BitPCM(input) {
+                const buffer = new ArrayBuffer(input.length * 2);
+                const view = new DataView(buffer);
+                for (let i = 0; i < input.length; i++) {
+                    let s = Math.max(-1, Math.min(1, input[i]));
+                    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+                }
+                return buffer;
+            }
+
+            function startAudioProcessing(stream) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                assemblyAudioContext = new AudioContext();
+                assemblySource = assemblyAudioContext.createMediaStreamSource(stream);
+                assemblyProcessor = assemblyAudioContext.createScriptProcessor(4096, 1, 1);
+                assemblyZeroGain = assemblyAudioContext.createGain();
+                assemblyZeroGain.gain.value = 0;
+
+                assemblyProcessor.onaudioprocess = function(e) {
+                    if (!assemblySocket || assemblySocket.readyState !== WebSocket.OPEN) return;
+                    const input = e.inputBuffer.getChannelData(0);
+                    const downsampled = downsampleBuffer(input, assemblyAudioContext.sampleRate, 16000);
+                    const pcm = floatTo16BitPCM(downsampled);
+                    if (pcm.byteLength > 0) {
+                        assemblySocket.send(pcm);
+                    }
+                };
+
+                assemblySource.connect(assemblyProcessor);
+                assemblyProcessor.connect(assemblyZeroGain);
+                assemblyZeroGain.connect(assemblyAudioContext.destination);
+            }
+
+            function cleanupAssemblyAudio() {
+                if (assemblyProcessor) {
+                    assemblyProcessor.disconnect();
+                    assemblyProcessor.onaudioprocess = null;
+                }
+                if (assemblySource) {
+                    assemblySource.disconnect();
+                }
+                if (assemblyZeroGain) {
+                    assemblyZeroGain.disconnect();
+                }
+                if (assemblyAudioContext) {
+                    assemblyAudioContext.close();
+                }
+                if (assemblyStream) {
+                    assemblyStream.getTracks().forEach(track => track.stop());
+                }
+                assemblyProcessor = null;
+                assemblySource = null;
+                assemblyZeroGain = null;
+                assemblyAudioContext = null;
+                assemblyStream = null;
+            }
+
+            function finalizeTranscript(text, autoStop) {
+                const trimmed = (text || '').trim();
+                if (!trimmed) return;
+                if (trimmed === lastFinalTranscript) return;
+                lastFinalTranscript = trimmed;
+                markUserActivity();
+                postHuman({
+                    text: trimmed,
+                    type: 'chat',
+                    interrupt: true,
+                    sessionid: parseInt(document.getElementById('sessionid').value),
+                }, 'Не удалось отправить распознанный текст. Проверьте соединение и нажмите «Подключиться».');
+                addChatMessage(trimmed, 'user');
+                $('#chat-message').val('');
+                if (autoStop && isRecording) {
+                    stopRecording('vad');
+                }
+            }
+
+            function handleAssemblyMessage(event) {
+                let message;
+                try {
+                    message = JSON.parse(event.data);
+                } catch (err) {
+                    return;
+                }
+                if (message.type === 'Turn') {
+                    const transcript = (message.transcript || '').trim();
+                    if (transcript) {
+                        lastTranscript = transcript;
+                        $('#chat-message').val(transcript);
+                    }
+                    if (message.end_of_turn && transcript) {
+                        finalizeTranscript(transcript, true);
+                    }
+                }
+            }
+
             // 按住说话按钮事件
             $('#voice-record-btn').on('mousedown touchstart', function(e) {
                 e.preventDefault();
                 startRecording();
             }).on('mouseup mouseleave touchend', function() {
                 if (isRecording) {
-                    stopRecording();
+                    stopRecording('manual');
                 }
             });
-            
-            // 开始录音
-            function startRecording() {
+
+            async function startRecording() {
                 if (isRecording) return;
-                
-                navigator.mediaDevices.getUserМедиа({ audio: true })
-                    .then(function(stream) {
-                        audioChunks = [];
-                        mediaRecorder = new МедиаRecorder(stream);
-                        
-                        mediaRecorder.ondataavailable = function(e) {
-                            if (e.data.size > 0) {
-                                audioChunks.push(e.data);
-                            }
-                        };
-                        
-                        mediaRecorder.start();
-                        isRecording = true;
-                        
-                        $('#voice-record-btn').addClass('recording-pulse');
-                        $('#voice-record-btn').css('background-color', '#dc3545');
-                        
-                        if (recognition) {
-                            recognition.start();
-                        }
-                    })
-                    .catch(function(error) {
-                        console.error('Нет доступа к микрофону:', error);
-                        alert('Нет доступа к микрофону. Проверьте разрешения браузера.');
-                    });
+                const sid = parseInt(document.getElementById('sessionid').value);
+                if (!sid) {
+                    alert('Сначала нажмите «Подключиться».');
+                    return;
+                }
+
+                isRecording = true;
+                lastTranscript = '';
+                lastFinalTranscript = '';
+                if (pendingTerminateTimer) {
+                    clearTimeout(pendingTerminateTimer);
+                    pendingTerminateTimer = null;
+                }
+
+                try {
+                    assemblyStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                } catch (error) {
+                    console.error('Нет доступа к микрофону:', error);
+                    alert('Нет доступа к микрофону. Проверьте разрешения браузера.');
+                    isRecording = false;
+                    return;
+                }
+
+                interruptAvatar();
+                $('#voice-record-btn').addClass('recording-pulse');
+                $('#voice-record-btn').css('background-color', '#dc3545');
+
+                let token;
+                try {
+                    token = await fetchAssemblyToken();
+                } catch (error) {
+                    console.error('AssemblyAI token error:', error);
+                    addChatMessage('Не удалось получить токен AssemblyAI. Проверьте ключ и сервер.', 'system');
+                    cleanupAssemblyAudio();
+                    isRecording = false;
+                    $('#voice-record-btn').removeClass('recording-pulse');
+                    $('#voice-record-btn').css('background-color', '');
+                    return;
+                }
+
+                assemblySocket = new WebSocket(buildAssemblyUrl(token));
+                assemblySocket.binaryType = 'arraybuffer';
+                assemblySocket.onopen = function() {
+                    startAudioProcessing(assemblyStream);
+                };
+                assemblySocket.onmessage = handleAssemblyMessage;
+                assemblySocket.onerror = function(err) {
+                    console.error('AssemblyAI socket error:', err);
+                };
+                assemblySocket.onclose = function() {
+                    assemblySocket = null;
+                };
             }
 
-            function stopRecording() {
+            function stopRecording(reason) {
                 if (!isRecording) return;
-                
-                mediaRecorder.stop();
                 isRecording = false;
-                
-                // 停止所有音轨
-                mediaRecorder.stream.getTracks().forEach(track => track.stop());
-                
-                // 视觉反馈恢复
+                cleanupAssemblyAudio();
+
                 $('#voice-record-btn').removeClass('recording-pulse');
                 $('#voice-record-btn').css('background-color', '');
-                
-                // 停止语音识别
-                if (recognition) {
-                    recognition.stop();
-                }
-                
-                // 获取识别的文本并Отправить
-                setTimeout(function() {
-                    const recognizedText = $('#chat-message').val().trim();
-                    if (recognizedText) {
-                        markUserActivity();
-                        // Отправить识别的文本
-                        postHuman({
-                            text: recognizedText,
-                            type: 'chat',
-                            interrupt: true,
-                            sessionid: parseInt(document.getElementById('sessionid').value),
-                        }, 'Не удалось отправить распознанный текст. Проверьте соединение и нажмите «Подключиться».');
-                        
-                        addChatMessage(recognizedText, 'user');
-                        $('#chat-message').val('');
+
+                if (assemblySocket && assemblySocket.readyState === WebSocket.OPEN) {
+                    try {
+                        assemblySocket.send(JSON.stringify({ type: 'ForceEndpoint' }));
+                    } catch (err) {
+                        // ignore
                     }
-                }, 500); 
+                    pendingTerminateTimer = setTimeout(function() {
+                        if (assemblySocket && assemblySocket.readyState === WebSocket.OPEN) {
+                            try {
+                                assemblySocket.send(JSON.stringify({ type: 'Terminate' }));
+                            } catch (err) {
+                                // ignore
+                            }
+                            assemblySocket.close();
+                        }
+                        assemblySocket = null;
+                    }, 800);
+                } else if (assemblySocket) {
+                    try {
+                        assemblySocket.close();
+                    } catch (err) {
+                        // ignore
+                    }
+                    assemblySocket = null;
+                }
+
+                if (reason !== 'vad' && lastTranscript && lastTranscript !== lastFinalTranscript) {
+                    finalizeTranscript(lastTranscript, false);
+                }
             }
 
             // WebRTC 相关功能
