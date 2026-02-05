@@ -35,7 +35,7 @@ import soundfile as sf
 import av
 from fractions import Fraction
 
-from ttsreal import EdgeTTS,SovitsTTS,XTTS,CosyVoiceTTS,FishTTS,TencentTTS,ElevenLabsTTS
+from ttsreal import EdgeTTS,SovitsTTS,XTTS,CosyVoiceTTS,FishTTS,TencentTTS,ElevenLabsTTS,OpenAITTS
 from logger import logger
 
 from tqdm import tqdm
@@ -58,6 +58,17 @@ class BaseReal:
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
         self.openai_base_url = os.getenv("OPENAI_BASE_URL", opt.openai_base if hasattr(opt, "openai_base") else "")
         self.openai_model = os.getenv("OPENAI_MODEL", opt.openai_model if hasattr(opt, "openai_model") else "gpt-4o-mini")
+        self.openai_tts_model = os.getenv("OPENAI_TTS_MODEL", opt.openai_tts_model if hasattr(opt, "openai_tts_model") else "gpt-4o-mini-tts")
+        self.openai_tts_voice = os.getenv("OPENAI_TTS_VOICE", opt.openai_tts_voice if hasattr(opt, "openai_tts_voice") else "ash")
+        self.openai_tts_format = os.getenv("OPENAI_TTS_FORMAT", opt.openai_tts_format if hasattr(opt, "openai_tts_format") else "pcm")
+        try:
+            self.openai_tts_speed = float(os.getenv("OPENAI_TTS_SPEED", opt.openai_tts_speed if hasattr(opt, "openai_tts_speed") else ""))
+        except Exception:
+            self.openai_tts_speed = None
+        try:
+            self.openai_tts_sample_rate = int(os.getenv("OPENAI_TTS_SAMPLE_RATE", opt.openai_tts_sample_rate if hasattr(opt, "openai_tts_sample_rate") else 24000))
+        except Exception:
+            self.openai_tts_sample_rate = 24000
         self.eleven_api_key = os.getenv("ELEVEN_API_KEY", "")
         self.eleven_voice_id = os.getenv("ELEVEN_VOICE_ID", opt.eleven_voice if hasattr(opt, "eleven_voice") else "")
         self.eleven_model_id = os.getenv("ELEVEN_MODEL_ID", opt.eleven_model if hasattr(opt, "eleven_model") else "eleven_turbo_v2")
@@ -84,6 +95,8 @@ class BaseReal:
             self.tts = TencentTTS(opt,self)
         elif opt.tts == "elevenlabs":
             self.tts = ElevenLabsTTS(opt,self)
+        elif opt.tts == "openai":
+            self.tts = OpenAITTS(opt,self)
         
         self.speaking = False
 

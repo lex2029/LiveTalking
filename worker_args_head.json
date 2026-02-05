@@ -3,7 +3,7 @@
   "--transport", "daily",
   "-O",
   "--secrets", "/workspace/LiveTalking/keys.json",
-  "--tts", "elevenlabs",
+  "--tts", "openai",
   "--asr_model", "cpierse/wav2vec2-large-xlsr-53-esperanto",
   "--asr_dim", "44",
   "--customvideo_config", "data/custom_config.json",

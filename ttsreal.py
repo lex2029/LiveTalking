@@ -293,6 +293,140 @@ class ElevenLabsTTS(BaseTTS):
         logger.info(f'-------elevenlabs tts time:{time.time()-t:.4f}s')
 
 ###########################################################################################
+class OpenAITTS(BaseTTS):
+    def _create_bytes_stream(self, byte_stream):
+        stream, sample_rate = sf.read(byte_stream)
+        logger.info(f'[INFO]tts audio stream {sample_rate}: {stream.shape}')
+        stream = stream.astype(np.float32)
+
+        if stream.ndim > 1:
+            logger.info(f'[WARN] audio has {stream.shape[1]} channels, only use the first.')
+            stream = stream[:, 0]
+
+        if sample_rate != self.sample_rate and stream.shape[0] > 0:
+            logger.info(f'[WARN] audio sample rate is {sample_rate}, resampling into {self.sample_rate}.')
+            stream = resampy.resample(x=stream, sr_orig=sample_rate, sr_new=self.sample_rate)
+
+        return stream
+
+    def txt_to_audio(self, msg):
+        text, textevent = msg
+        api_key = getattr(self.parent, "openai_api_key", "") or os.getenv("OPENAI_API_KEY", "")
+        base_url = getattr(self.parent, "openai_base_url", "") or os.getenv("OPENAI_BASE_URL", "")
+        model_id = getattr(self.parent, "openai_tts_model", "") or os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+        voice = getattr(self.parent, "openai_tts_voice", "") or os.getenv("OPENAI_TTS_VOICE", "ash")
+        response_format = getattr(self.parent, "openai_tts_format", "") or os.getenv("OPENAI_TTS_FORMAT", "pcm")
+        sample_rate = getattr(self.parent, "openai_tts_sample_rate", None)
+        if sample_rate is None:
+            try:
+                sample_rate = int(os.getenv("OPENAI_TTS_SAMPLE_RATE", "24000"))
+            except Exception:
+                sample_rate = 24000
+        speed = getattr(self.parent, "openai_tts_speed", None)
+        if speed is None:
+            try:
+                env_speed = os.getenv("OPENAI_TTS_SPEED", "")
+                speed = float(env_speed) if env_speed else None
+            except Exception:
+                speed = None
+
+        if not api_key:
+            logger.error("OpenAI TTS missing API key.")
+            return
+
+        try:
+            from openai import OpenAI
+        except Exception as exc:
+            logger.error("OpenAI SDK not available: %s", exc)
+            return
+
+        t = time.time()
+        try:
+            client = OpenAI(api_key=api_key, base_url=base_url if base_url else None)
+            kwargs = {
+                "model": model_id,
+                "voice": voice,
+                "input": text,
+                "response_format": response_format,
+            }
+            if speed is not None:
+                kwargs["speed"] = speed
+
+            if response_format == "pcm":
+                in_rate = int(sample_rate)
+                in_chunk = max(1, int(in_rate * (self.chunk / float(self.sample_rate))))
+                bytes_per_chunk = in_chunk * 2  # int16
+                buf = bytearray()
+                started = False
+                with client.audio.speech.with_streaming_response.create(**kwargs) as response:
+                    for chunk in response.iter_bytes():
+                        if not chunk or self.state != State.RUNNING:
+                            continue
+                        buf.extend(chunk)
+                        while len(buf) >= bytes_per_chunk and self.state == State.RUNNING:
+                            frame_bytes = buf[:bytes_per_chunk]
+                            del buf[:bytes_per_chunk]
+                            frame = np.frombuffer(frame_bytes, dtype=np.int16).astype(np.float32) / 32767.0
+                            if in_rate != self.sample_rate:
+                                frame = resampy.resample(frame, in_rate, self.sample_rate)
+                            if frame.shape[0] < self.chunk:
+                                frame = np.pad(frame, (0, self.chunk - frame.shape[0]))
+                            elif frame.shape[0] > self.chunk:
+                                frame = frame[:self.chunk]
+                            eventpoint = None
+                            if not started:
+                                eventpoint = {'status': 'start', 'text': text, 'msgevent': textevent}
+                                started = True
+                            self.parent.put_audio_frame(frame, eventpoint)
+
+                if self.state != State.RUNNING:
+                    return
+
+                if len(buf) > 0:
+                    if len(buf) < bytes_per_chunk:
+                        buf.extend(b'\x00' * (bytes_per_chunk - len(buf)))
+                    frame = np.frombuffer(buf[:bytes_per_chunk], dtype=np.int16).astype(np.float32) / 32767.0
+                    if in_rate != self.sample_rate:
+                        frame = resampy.resample(frame, in_rate, self.sample_rate)
+                    if frame.shape[0] < self.chunk:
+                        frame = np.pad(frame, (0, self.chunk - frame.shape[0]))
+                    elif frame.shape[0] > self.chunk:
+                        frame = frame[:self.chunk]
+                    eventpoint = {'status': 'end', 'text': text, 'msgevent': textevent}
+                    self.parent.put_audio_frame(frame, eventpoint)
+                elif started:
+                    eventpoint = {'status': 'end', 'text': text, 'msgevent': textevent}
+                    self.parent.put_audio_frame(np.zeros(self.chunk, dtype=np.float32), eventpoint)
+            else:
+                # Non-PCM: download then decode (adds latency).
+                with client.audio.speech.with_streaming_response.create(**kwargs) as response:
+                    audio_bytes = response.read()
+                if not audio_bytes:
+                    logger.error("OpenAI TTS returned empty audio.")
+                    return
+                stream = self._create_bytes_stream(BytesIO(audio_bytes))
+                streamlen = stream.shape[0]
+                idx = 0
+                started = False
+                while streamlen >= self.chunk and self.state == State.RUNNING:
+                    eventpoint = None
+                    if not started:
+                        eventpoint = {'status': 'start', 'text': text, 'msgevent': textevent}
+                        started = True
+                    elif streamlen < self.chunk:
+                        eventpoint = {'status': 'end', 'text': text, 'msgevent': textevent}
+                    self.parent.put_audio_frame(stream[idx:idx+self.chunk], eventpoint)
+                    streamlen -= self.chunk
+                    idx += self.chunk
+                if started:
+                    eventpoint = {'status': 'end', 'text': text, 'msgevent': textevent}
+                    self.parent.put_audio_frame(np.zeros(self.chunk, dtype=np.float32), eventpoint)
+        except Exception:
+            logger.exception("openai tts")
+            return
+        logger.info(f'-------openai tts time:{time.time()-t:.4f}s')
+
+###########################################################################################
 class FishTTS(BaseTTS):
     def txt_to_audio(self,msg): 
         text,textevent = msg

@@ -148,6 +148,11 @@ _default_config = {
     "openai_key": "",
     "openai_base": "",
     "openai_model": "",
+    "openai_tts_model": "",
+    "openai_tts_voice": "",
+    "openai_tts_format": "",
+    "openai_tts_speed": None,
+    "openai_tts_sample_rate": None,
     "eleven_key": "",
     "eleven_voice": "",
     "eleven_model": "",
@@ -343,6 +348,11 @@ def _load_secrets(path: str):
     openai_key = _pick("openai_key", "openai_api_key", "OPENAI_API_KEY")
     openai_base = _pick("openai_base", "openai_base_url", "OPENAI_BASE_URL")
     openai_model = _pick("openai_model", "OPENAI_MODEL")
+    openai_tts_model = _pick("openai_tts_model", "OPENAI_TTS_MODEL")
+    openai_tts_voice = _pick("openai_tts_voice", "OPENAI_TTS_VOICE")
+    openai_tts_format = _pick("openai_tts_format", "OPENAI_TTS_FORMAT")
+    openai_tts_speed = data.get("openai_tts_speed", data.get("OPENAI_TTS_SPEED"))
+    openai_tts_sample_rate = data.get("openai_tts_sample_rate", data.get("OPENAI_TTS_SAMPLE_RATE"))
     eleven_key = _pick("eleven_key", "eleven_api_key", "ELEVEN_API_KEY")
     eleven_voice = _pick("eleven_voice", "eleven_voice_id", "ELEVEN_VOICE_ID")
     eleven_model = _pick("eleven_model", "eleven_model_id", "ELEVEN_MODEL_ID")
@@ -356,6 +366,22 @@ def _load_secrets(path: str):
         _default_config["openai_base"] = openai_base
     if openai_model:
         _default_config["openai_model"] = openai_model
+    if openai_tts_model:
+        _default_config["openai_tts_model"] = openai_tts_model
+    if openai_tts_voice:
+        _default_config["openai_tts_voice"] = openai_tts_voice
+    if openai_tts_format:
+        _default_config["openai_tts_format"] = openai_tts_format
+    if openai_tts_speed is not None:
+        try:
+            _default_config["openai_tts_speed"] = float(openai_tts_speed)
+        except Exception:
+            pass
+    if openai_tts_sample_rate is not None:
+        try:
+            _default_config["openai_tts_sample_rate"] = int(openai_tts_sample_rate)
+        except Exception:
+            pass
     if eleven_key:
         _default_config["eleven_key"] = eleven_key
     if eleven_voice:
@@ -410,6 +436,16 @@ def build_nerfreal(sessionid:int)->BaseReal:
         nerfreal.openai_base_url = _default_config["openai_base"]
     if _default_config.get("openai_model"):
         nerfreal.openai_model = _default_config["openai_model"]
+    if _default_config.get("openai_tts_model"):
+        nerfreal.openai_tts_model = _default_config["openai_tts_model"]
+    if _default_config.get("openai_tts_voice"):
+        nerfreal.openai_tts_voice = _default_config["openai_tts_voice"]
+    if _default_config.get("openai_tts_format"):
+        nerfreal.openai_tts_format = _default_config["openai_tts_format"]
+    if _default_config.get("openai_tts_speed") is not None:
+        nerfreal.openai_tts_speed = _default_config["openai_tts_speed"]
+    if _default_config.get("openai_tts_sample_rate") is not None:
+        nerfreal.openai_tts_sample_rate = _default_config["openai_tts_sample_rate"]
     if _default_config.get("eleven_key"):
         nerfreal.eleven_api_key = _default_config["eleven_key"]
     if _default_config.get("eleven_voice"):
@@ -700,6 +736,40 @@ async def config(request):
             _default_config["openai_model"] = model
             if nerfreal:
                 nerfreal.openai_model = model
+    if 'openai_tts_model' in params:
+        model = (params.get('openai_tts_model') or "").strip()
+        if model:
+            _default_config["openai_tts_model"] = model
+            if nerfreal:
+                nerfreal.openai_tts_model = model
+    if 'openai_tts_voice' in params:
+        value = (params.get('openai_tts_voice') or "").strip()
+        if value:
+            _default_config["openai_tts_voice"] = value
+            if nerfreal:
+                nerfreal.openai_tts_voice = value
+    if 'openai_tts_format' in params:
+        value = (params.get('openai_tts_format') or "").strip()
+        if value:
+            _default_config["openai_tts_format"] = value
+            if nerfreal:
+                nerfreal.openai_tts_format = value
+    if 'openai_tts_speed' in params:
+        try:
+            value = float(params.get('openai_tts_speed'))
+            _default_config["openai_tts_speed"] = value
+            if nerfreal:
+                nerfreal.openai_tts_speed = value
+        except Exception:
+            pass
+    if 'openai_tts_sample_rate' in params:
+        try:
+            value = int(params.get('openai_tts_sample_rate'))
+            _default_config["openai_tts_sample_rate"] = value
+            if nerfreal:
+                nerfreal.openai_tts_sample_rate = value
+        except Exception:
+            pass
 
     # ElevenLabs settings
     if 'eleven_key' in params:
@@ -1057,6 +1127,11 @@ if __name__ == '__main__':
     parser.add_argument('--REF_FILE', type=str, default=None)
     parser.add_argument('--REF_TEXT', type=str, default=None)
     parser.add_argument('--TTS_SERVER', type=str, default='http://127.0.0.1:9880') # http://localhost:9000
+    parser.add_argument('--openai_tts_model', type=str, default='gpt-4o-mini-tts')
+    parser.add_argument('--openai_tts_voice', type=str, default='ash')
+    parser.add_argument('--openai_tts_format', type=str, default='pcm')
+    parser.add_argument('--openai_tts_speed', type=float, default=None)
+    parser.add_argument('--openai_tts_sample_rate', type=int, default=24000)
     parser.add_argument('--openai_base', type=str, default='')
     parser.add_argument('--openai_model', type=str, default='gpt-4o-mini')
     parser.add_argument('--eleven_voice', type=str, default='')
