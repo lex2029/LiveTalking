@@ -22,7 +22,7 @@ LiveAvatar (LiveTalking) – clean install & запуск
 sudo apt update
 sudo apt install -y \
   build-essential git git-lfs python3.10 python3.10-venv \
-  ffmpeg cmake ninja-build pkg-config \
+  ffmpeg cmake ninja-build pkg-config zstd \
   libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
   libssl-dev libffi-dev
 
