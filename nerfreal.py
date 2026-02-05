@@ -395,9 +395,11 @@ class NeRFReal(BaseReal):
                 if delay > 0:
                     time.sleep(delay)
             elif video_track is not None:
-                if video_track._queue.qsize()>=5:
-                    #print('sleep qsize=',video_track._queue.qsize())
-                    time.sleep(0.04*video_track._queue.qsize()*0.8)
+                # Some transports don't populate _queue (e.g. Daily), so guard it.
+                queue = getattr(video_track, "_queue", None)
+                if queue is not None and queue.qsize() >= 5:
+                    #print('sleep qsize=',queue.qsize())
+                    time.sleep(0.04 * queue.qsize() * 0.8)
         logger.info('nerfreal thread stop')
             
             
