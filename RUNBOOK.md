@@ -61,9 +61,17 @@ cp /workspace/LiveTalking/daily.example.env /workspace/LiveTalking/daily.env
 - `/workspace/LiveTalking/gateway.log`
 - `/workspace/LiveTalking/logs/worker-8091.log` (и т.д.)
 
-Автозапуск после ребута:
-- Скрипт: `/workspace/LiveTalking/scripts/autostart_liveavatar.sh`
-- Cron (root): `@reboot /workspace/LiveTalking/scripts/autostart_liveavatar.sh`
+Автозапуск и watchdog:
+- Скрипты:
+  - `/workspace/LiveTalking/scripts/run_gateway_forever.sh` (gateway в foreground)
+  - `/workspace/LiveTalking/scripts/run_cloudflared_forever.sh` (cloudflared в foreground)
+  - `/workspace/LiveTalking/scripts/autostart_liveavatar.sh` (tmux + health check)
+- Cron (root):
+  - `@reboot /workspace/LiveTalking/scripts/autostart_liveavatar.sh`
+  - `* * * * * /workspace/LiveTalking/scripts/autostart_liveavatar.sh`
+- tmux-сессии:
+  - `liveavatar-gateway`
+  - `liveavatar-cloudflared`
 
 ## 5) Веб‑интерфейс
 Открывать:
