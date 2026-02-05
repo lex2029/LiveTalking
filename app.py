@@ -565,14 +565,30 @@ async def daily_start(request):
             text=json.dumps({"code": -1, "msg": "Daily not configured"}),
         )
 
+    if opt.transport != "daily":
+        opt.transport = "daily"
+
     sessionid = randN(6)
     logger.info("daily sessionid=%d", sessionid)
     nerfreals[sessionid] = None
-    nerfreal = await asyncio.get_event_loop().run_in_executor(None, build_nerfreal, sessionid)
+    try:
+        nerfreal = await asyncio.get_event_loop().run_in_executor(None, build_nerfreal, sessionid)
+    except Exception:
+        logger.exception("build_nerfreal failed")
+        nerfreals.pop(sessionid, None)
+        return web.Response(
+            content_type="application/json",
+            status=500,
+            text=json.dumps({"code": -1, "msg": "Failed to build avatar"}),
+        )
+    if nerfreal is None:
+        nerfreals.pop(sessionid, None)
+        return web.Response(
+            content_type="application/json",
+            status=500,
+            text=json.dumps({"code": -1, "msg": "Failed to build avatar"}),
+        )
     nerfreals[sessionid] = nerfreal
-
-    if opt.transport != "daily":
-        opt.transport = "daily"
 
     room_name = f"avatar-{sessionid}-{uuid.uuid4().hex[:6]}"
     room = await _daily_create_room(room_name)
