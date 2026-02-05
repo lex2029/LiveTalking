@@ -673,11 +673,12 @@ async def human(request):
                 text=json.dumps({"code": -1, "msg": "LLM error"}),
             )
 
+    payload = {"code": 0, "data": "ok"}
+    if params.get('type') == 'chat':
+        payload["reply"] = res if isinstance(res, str) else ""
     return web.Response(
         content_type="application/json",
-        text=json.dumps(
-            {"code": 0, "data":"ok"}
-        ),
+        text=json.dumps(payload),
     )
 
 async def humanaudio(request):

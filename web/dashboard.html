@@ -856,8 +856,17 @@
                         'Content-Type': 'application/json'
                     },
                     method: 'POST'
-                }).then(function(response) {
-                    if (response.ok) return response;
+                }).then(async function(response) {
+                    if (response.ok) {
+                        let data = null;
+                        try {
+                            data = await response.json();
+                        } catch (e) {}
+                        if (data && data.reply) {
+                            addChatMessage(data.reply, 'assistant');
+                        }
+                        return data;
+                    }
                     if (response.status === 410) {
                         onPeerDisconnected('session-expired');
                         showTimeoutNotice('Сессия истекла или была перезапущена. Нажмите «Позвонить».');

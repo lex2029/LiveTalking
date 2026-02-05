@@ -115,3 +115,4 @@ def llm_response(message,nerfreal:BaseReal):
         nerfreal.put_msg_txt(cleaned_final)
     full_response = _strip_user_echo(full_response, message)
     _append_history(history, "assistant", full_response)
+    return full_response
