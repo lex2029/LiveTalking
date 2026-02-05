@@ -47,6 +47,7 @@ cp /workspace/LiveTalking/daily.example.env /workspace/LiveTalking/daily.env
 - `WORKER_STARTUP_TIMEOUT` — через сколько секунд писать warning при долгом прогреве
 - `WORKER_STARTUP_STAGGER` — пауза между стартами воркеров (сек), чтобы не было GPU‑пиков
 - `WORKER_WAIT_TIMEOUT` — сколько ждать свободного воркера при старте сессии (сек)
+- `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, `TRANSFORMERS_OFFLINE`, `HF_HUB_OFFLINE` — фиксируем кэш и отключаем сетевые хождения при старте (ускоряет прогрев)
 
 > `daily.env` уже в `.gitignore`.
 
