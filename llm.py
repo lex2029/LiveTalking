@@ -10,7 +10,7 @@ SYSTEM_PROMPT = (
     "Do not repeat or quote the user's message. "
     "Do not append the user's message at the end."
 )
-MAX_HISTORY = 10
+MAX_HISTORY = 20
 
 
 def _get_history(nerfreal: BaseReal):

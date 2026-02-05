@@ -665,9 +665,13 @@ async def human(request):
             res=await asyncio.get_event_loop().run_in_executor(None, llm_response, params['text'],nerfreals[sessionid])
             #nerfreals[sessionid].put_msg_txt(res)
         except Exception as e:
-            # Fallback to echo when no LLM key is configured
-            logger.info(f'LLM error, fallback to echo: {e}')
-            nerfreals[sessionid].put_msg_txt(params['text'])
+            # Do not echo the user's message on LLM errors.
+            logger.info(f'LLM error, no echo: {e}')
+            return web.Response(
+                status=500,
+                content_type="application/json",
+                text=json.dumps({"code": -1, "msg": "LLM error"}),
+            )
 
     return web.Response(
         content_type="application/json",
