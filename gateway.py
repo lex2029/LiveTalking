@@ -344,37 +344,50 @@ async def daily_start(request: web.Request) -> web.Response:
             text=json.dumps({"code": -1, "msg": "Profile not ready"}),
         )
 
-    worker = await manager.wait_for_free_worker()
-    if not worker:
-        msg = "No available worker"
-        if manager.has_starting_workers():
-            msg = "Workers are warming up, please retry shortly"
-        return web.Response(
-            status=503,
-            content_type="application/json",
-            text=json.dumps({"code": -1, "msg": msg}),
-        )
-
-    url = f"http://127.0.0.1:{worker.port}/daily/start"
-    async with manager.client.post(url, json=params) as resp:
-        body_text = await resp.text()
-        try:
-            data = json.loads(body_text)
-        except Exception:
+    last_error = None
+    for attempt in range(2):
+        worker = await manager.wait_for_free_worker()
+        if not worker:
+            msg = "No available worker"
+            if manager.has_starting_workers():
+                msg = "Workers are warming up, please retry shortly"
             return web.Response(
-                status=502,
+                status=503,
                 content_type="application/json",
-                text=json.dumps({"code": -1, "msg": "Invalid worker response", "detail": body_text[:200]}),
+                text=json.dumps({"code": -1, "msg": msg}),
             )
 
-        if resp.status == 200 and isinstance(data, dict) and data.get("code", 0) == 0 and "sessionid" in data:
-            sessionid = int(data["sessionid"])
-            manager.map_session(sessionid, worker)
-        return web.Response(
-            content_type="application/json",
-            status=resp.status,
-            text=json.dumps(data),
-        )
+        url = f"http://127.0.0.1:{worker.port}/daily/start"
+        try:
+            async with manager.client.post(url, json=params) as resp:
+                body_text = await resp.text()
+                try:
+                    data = json.loads(body_text)
+                except Exception:
+                    return web.Response(
+                        status=502,
+                        content_type="application/json",
+                        text=json.dumps({"code": -1, "msg": "Invalid worker response", "detail": body_text[:200]}),
+                    )
+
+                if resp.status == 200 and isinstance(data, dict) and data.get("code", 0) == 0 and "sessionid" in data:
+                    sessionid = int(data["sessionid"])
+                    manager.map_session(sessionid, worker)
+                return web.Response(
+                    content_type="application/json",
+                    status=resp.status,
+                    text=json.dumps(data),
+                )
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            last_error = exc
+            await manager.stop_worker(worker, reason="request-failed")
+            continue
+
+    return web.Response(
+        status=502,
+        content_type="application/json",
+        text=json.dumps({"code": -1, "msg": f"Worker request failed: {last_error}"}),
+    )
 
 
 async def human(request: web.Request) -> web.Response:
@@ -468,29 +481,42 @@ async def assemblyai_token(request: web.Request) -> web.Response:
         )
 
     # Prefer an existing worker; otherwise start one.
-    worker = None
-    for candidate in manager.workers_by_port.values():
-        if candidate.process.poll() is None:
-            worker = candidate
-            break
-    if worker is None and manager.ports:
-        worker = await manager.start_worker_at(manager.ports[0])
-        if worker:
+    last_error = None
+    for attempt in range(2):
+        worker = None
+        for candidate in manager.workers_by_port.values():
+            if candidate.process.poll() is None and candidate.ready:
+                worker = candidate
+                break
+        if worker is None and manager.ports:
+            worker = await manager.start_worker_at(manager.ports[0])
+            if worker:
+                await manager.wait_until_ready(worker)
+        if worker and not worker.ready:
             await manager.wait_until_ready(worker)
-    if worker and not worker.ready:
-        await manager.wait_until_ready(worker)
 
-    if not worker:
-        return web.Response(
-            status=503,
-            content_type="application/json",
-            text=json.dumps({"code": -1, "msg": "No worker available"}),
-        )
+        if not worker:
+            return web.Response(
+                status=503,
+                content_type="application/json",
+                text=json.dumps({"code": -1, "msg": "No worker available"}),
+            )
 
-    url = f"http://127.0.0.1:{worker.port}/assemblyai/token"
-    async with manager.client.post(url, json=params) as resp:
-        body = await resp.read()
-        return web.Response(status=resp.status, body=body, content_type=resp.content_type)
+        url = f"http://127.0.0.1:{worker.port}/assemblyai/token"
+        try:
+            async with manager.client.post(url, json=params) as resp:
+                body = await resp.read()
+                return web.Response(status=resp.status, body=body, content_type=resp.content_type)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            last_error = exc
+            await manager.stop_worker(worker, reason="request-failed")
+            continue
+
+    return web.Response(
+        status=502,
+        content_type="application/json",
+        text=json.dumps({"code": -1, "msg": f"Worker request failed: {last_error}"}),
+    )
 
 
 async def record(request: web.Request) -> web.Response:
