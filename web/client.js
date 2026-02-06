@@ -366,7 +366,8 @@ async function start() {
     if (iceServers.length > 0) {
         config.iceServers = iceServers;
         // If user forces TURN-only, use relay, otherwise allow direct for faster connect.
-        if (document.getElementById('use-stun').checked) {
+        const useStunEl = document.getElementById('use-stun');
+        if (useStunEl && useStunEl.checked) {
             config.iceTransportPolicy = 'relay';
         } else {
             config.iceTransportPolicy = 'all';
@@ -378,7 +379,8 @@ async function start() {
 
     pc = new RTCPeerConnection(config);
     remoteStream = new MediaStream();
-    document.getElementById('video').srcObject = remoteStream;
+    const videoEl = document.getElementById('video');
+    if (videoEl) videoEl.srcObject = remoteStream;
 
     // connect audio / video
     pc.addEventListener('track', (evt) => {
@@ -402,13 +404,16 @@ async function start() {
         }
     });
 
-    document.getElementById('start').style.display = 'none';
+    const startBtn = document.getElementById('start');
+    if (startBtn) startBtn.style.display = 'none';
     negotiate();
-    document.getElementById('stop').style.display = 'inline-block';
+    const stopBtn = document.getElementById('stop');
+    if (stopBtn) stopBtn.style.display = 'inline-block';
 }
 
 function stop() {
-    document.getElementById('stop').style.display = 'none';
+    const stopBtn = document.getElementById('stop');
+    if (stopBtn) stopBtn.style.display = 'none';
 
     // close peer connection
     setTimeout(() => {

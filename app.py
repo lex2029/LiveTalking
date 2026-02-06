@@ -32,7 +32,7 @@ import torch.multiprocessing as mp
 from aiohttp import web
 import aiohttp
 import aiohttp_cors
-from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from aiortc.rtcrtpsender import RTCRtpSender
 from aiortc.rtcrtpparameters import RTCRtpEncodingParameters
 from webrtc import HumanPlayer
@@ -497,12 +497,179 @@ async def _daily_create_token(room_name: str, user_name: str, is_owner: bool) ->
         return None
     return data.get("token")
 
-#@app.route('/offer', methods=['POST'])
-async def offer(request):
+
+
+def _ice_servers_config():
+    raw = os.getenv("ICE_SERVERS_JSON", "").strip()
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict) and "iceServers" in data:
+                return data["iceServers"]
+            if isinstance(data, list):
+                return data
+        except Exception as exc:
+            logger.info("Failed to parse ICE_SERVERS_JSON: %s", exc)
+    urls = os.getenv("ICE_URLS", "").strip()
+    if not urls:
+        urls = "stun:stun.l.google.com:19302"
+    url_list = [u.strip() for u in urls.split(",") if u.strip()]
+    if not url_list:
+        return []
+    server = {"urls": url_list}
+    username = os.getenv("ICE_USERNAME", "").strip()
+    credential = os.getenv("ICE_CREDENTIAL", "").strip()
+    if username:
+        server["username"] = username
+    if credential:
+        server["credential"] = credential
+    return [server]
+
+
+def _ice_servers_for_aiortc():
+    servers = []
+    for item in _ice_servers_config():
+        if isinstance(item, str):
+            servers.append(RTCIceServer(urls=[item]))
+            continue
+        if not isinstance(item, dict):
+            continue
+        urls = item.get("urls") or item.get("url")
+        if isinstance(urls, str):
+            urls = [urls]
+        if not urls:
+            continue
+        servers.append(
+            RTCIceServer(
+                urls=urls,
+                username=item.get("username"),
+                credential=item.get("credential") or item.get("password"),
+            )
+        )
+    return servers
+
+
+def _ice_config_for_aiortc():
+    servers = _ice_servers_for_aiortc()
+    if not servers:
+        return None
+    return RTCConfiguration(iceServers=servers)
+
+
+async def ice(request):
     return web.Response(
         content_type="application/json",
-        status=410,
-        text=json.dumps({"code": -1, "msg": "WebRTC offer disabled (Daily only)"}),
+        text=json.dumps({"iceServers": _ice_servers_config()}),
+    )
+
+#@app.route('/offer', methods=['POST'])
+async def offer(request):
+    params = await request.json()
+    if len(nerfreals) >= opt.max_session:
+        return web.Response(
+            content_type="application/json",
+            status=429,
+            text=json.dumps({"code": -1, "msg": "reach max session"}),
+        )
+
+    offer_sdp = params.get("sdp")
+    offer_type = params.get("type")
+    if not offer_sdp or not offer_type:
+        return web.Response(
+            content_type="application/json",
+            status=400,
+            text=json.dumps({"code": -1, "msg": "invalid offer"}),
+        )
+
+    if opt.transport != "webrtc":
+        opt.transport = "webrtc"
+
+    sessionid = randN(6)
+    nerfreals[sessionid] = None
+    try:
+        nerfreal = await asyncio.get_event_loop().run_in_executor(None, build_nerfreal, sessionid)
+    except Exception:
+        logger.exception("build_nerfreal failed")
+        nerfreals.pop(sessionid, None)
+        return web.Response(
+            content_type="application/json",
+            status=500,
+            text=json.dumps({"code": -1, "msg": "Failed to build avatar"}),
+        )
+    if nerfreal is None:
+        nerfreals.pop(sessionid, None)
+        return web.Response(
+            content_type="application/json",
+            status=500,
+            text=json.dumps({"code": -1, "msg": "Failed to build avatar"}),
+        )
+    nerfreals[sessionid] = nerfreal
+
+    pc_config = _ice_config_for_aiortc()
+    pc = RTCPeerConnection(pc_config) if pc_config else RTCPeerConnection()
+    pcs.add(pc)
+    pcs_by_session[sessionid] = pc
+
+    @pc.on("connectionstatechange")
+    async def on_connectionstatechange():
+        logger.info("Connection state is %s", pc.connectionState)
+        if pc.connectionState in ("failed", "closed", "disconnected"):
+            pcs.discard(pc)
+            pcs_by_session.pop(sessionid, None)
+            video_senders_by_session.pop(sessionid, None)
+            audio_senders_by_session.pop(sessionid, None)
+            nerfreal = nerfreals.pop(sessionid, None)
+            if nerfreal:
+                try:
+                    nerfreal.flush_talk()
+                except Exception:
+                    pass
+            try:
+                await pc.close()
+            except Exception:
+                pass
+
+    player = HumanPlayer(nerfreal)
+    audio_sender = pc.addTrack(player.audio)
+    video_sender = pc.addTrack(player.video)
+    audio_senders_by_session[sessionid] = audio_sender
+    video_senders_by_session[sessionid] = video_sender
+
+    quality = params.get("quality")
+    if quality:
+        _apply_video_quality(video_sender, quality)
+        _apply_audio_quality(audio_sender, quality)
+
+    await pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp, type=offer_type))
+    answer = await pc.createAnswer()
+    await pc.setLocalDescription(answer)
+
+    async def _wait_for_ice_complete():
+        if pc.iceGatheringState == "complete":
+            return
+        done = asyncio.Event()
+
+        @pc.on("icegatheringstatechange")
+        def _on_state_change():
+            if pc.iceGatheringState == "complete":
+                done.set()
+
+        try:
+            await asyncio.wait_for(done.wait(), timeout=3.0)
+        except asyncio.TimeoutError:
+            pass
+
+    await _wait_for_ice_complete()
+
+    return web.Response(
+        content_type="application/json",
+        text=json.dumps(
+            {
+                "sdp": pc.localDescription.sdp,
+                "type": pc.localDescription.type,
+                "sessionid": sessionid,
+            }
+        ),
     )
 
 
@@ -1214,6 +1381,8 @@ if __name__ == '__main__':
     appasync = web.Application()
     appasync.on_shutdown.append(on_shutdown)
     appasync.router.add_post("/daily/start", daily_start)
+    appasync.router.add_post("/offer", offer)
+    appasync.router.add_get("/ice", ice)
     appasync.router.add_post("/human", human)
     appasync.router.add_post("/humanaudio", humanaudio)
     appasync.router.add_post("/set_audiotype", set_audiotype)
@@ -1262,7 +1431,6 @@ if __name__ == '__main__':
     run_server(web.AppRunner(appasync))
 
     #app.on_shutdown.append(on_shutdown)
-    #app.router.add_post("/offer", offer)
 
     # print('start websocket server')
     # server = pywsgi.WSGIServer(('0.0.0.0', 8000), app, handler_class=WebSocketHandler)

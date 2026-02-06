@@ -1,184 +1,182 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WebRTC</title>
-    <style>
-    button {
-        padding: 8px 16px;
-    }
-
-    video {
-        width: 100%;
-    }
-
-    .option {
-        margin-bottom: 8px;
-    }
-
-    #media {
-        max-width: 1280px;
-    }
-    </style>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebRTC Chat (Lite)</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 16px; }
+    button { padding: 8px 16px; margin-right: 6px; }
+    textarea { width: 600px; height: 60px; }
+    #media { max-width: 1280px; margin-top: 12px; }
+    #video { width: 600px; background: #000; }
+    .option { margin-bottom: 8px; }
+    .row { margin-bottom: 10px; }
+    #reply { margin-top: 8px; color: #444; white-space: pre-wrap; }
+  </style>
 </head>
 <body>
 
 <div class="option">
-    <input id="use-stun" type="checkbox"/>
-    <label for="use-stun">Использовать STUN-сервер</label>
+  <input id="use-stun" type="checkbox"/>
+  <label for="use-stun">Использовать STUN-сервер</label>
 </div>
-<button id="start" onclick="start()">Подключиться</button>
-<button id="stop" style="display: none" onclick="stop()">Отключить</button>
-<button class="btn btn-primary" id="btn_start_record">Начать запись</button>
-<button class="btn btn-primary" id="btn_stop_record" disabled>Остановить запись</button>
-<!-- <button class="btn btn-primary" id="btn_download">Скачать видео</button> -->
-<input type="hidden" id="sessionid" value="0">
-<form class="form-inline" id="echo-form">
-    <div class="form-group">
-      <p>Введите текст</p>
 
-      <textarea cols="2" rows="3" style="width:600px;height:50px;" class="form-control" id="message">тест</textarea>
-    </div>
-    <button type="submit" class="btn btn-default">Отправить</button>
-  </form>
+<div class="row">
+  <button id="start">Подключиться</button>
+  <button id="stop" style="display:none">Отключить</button>
+</div>
+
+<input type="hidden" id="sessionid" value="0">
+
+<form id="echo-form" action="javascript:void(0)">
+  <div class="row">
+    <label for="message">Введите текст</label>
+  </div>
+  <div class="row">
+    <textarea id="message">тест</textarea>
+  </div>
+  <button type="submit" id="send">Отправить</button>
+</form>
+
+<div id="reply"></div>
 
 <div id="media">
-    <h2>Медиа</h2>
-
-    <audio id="audio" autoplay="true"></audio>
-    <video id="video" style="width:600px;" autoplay="true" playsinline="true"></video>
+  <audio id="audio" autoplay></audio>
+  <video id="video" autoplay playsinline></video>
 </div>
 
-<script src="client.js?v=20260204-5"></script>
-<script type="text/javascript" src="https://cdn.sockjs.org/sockjs-0.3.4.js"></script>
-<script type="text/javascript" src="https://code.jquery.com/jquery-2.1.1.min.js"></script>
-</body>
-<script type="text/javascript" charset="utf-8">
+<script>
+(function () {
+  var pc = null;
+  var remoteStream = null;
 
-	$(document).ready(function() {
-	  // var host = window.location.hostname
-	  // var ws = new WebSocket("ws://"+host+":8000/humanecho");
-	  // //document.getElementsByTagName("video")[0].setAttribute("src", aa["video"]);
-	  // ws.onopen = function() {
-		// console.log('Connected');
-	  // };
-	  // ws.onmessage = function(e) {
-		// console.log('Received: ' + e.data);
-		// data = e
-		// var vid = JSON.parse(data.data); 
-		// console.log(typeof(vid),vid)
-		// //document.getElementsByTagName("video")[0].setAttribute("src", vid["video"]);
-		
-	  // };
-	  // ws.onclose = function(e) {
-		// console.log('Closed');
-	  // };
+  function log(msg) {
+    var replyEl = document.getElementById("reply");
+    if (replyEl) replyEl.textContent = msg;
+  }
 
-	  $('#echo-form').on('submit', function(e) {
-      e.preventDefault();
-      var message = $('#message').val();
-      console.log('Отправитьing: ' + message);
-      console.log('sessionid: ',document.getElementById('sessionid').value);
-      fetch('/human', {
-            body: JSON.stringify({
-                text: message,
-                type: 'chat',
-                interrupt: true,
-                sessionid:parseInt(document.getElementById('sessionid').value),
-            }),
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            method: 'POST'
-      });
-      //ws.send(message);
-      $('#message').val('');
-	  });
+  async function fetchIceServers() {
+    try {
+      var res = await fetch("/ice");
+      var data = await res.json();
+      if (data && Array.isArray(data.iceServers) && data.iceServers.length) {
+        return data.iceServers;
+      }
+    } catch (e) {}
+    return [{ urls: ["stun:stun.l.google.com:19302"] }];
+  }
 
-    $('#btn_start_record').click(function() {
-        // 开始录制
-        console.log('Подключитьсяing recording...');
-        fetch('/record', {
-            body: JSON.stringify({
-                    type: 'start_record',
-                }),
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-            method: 'POST'
-        }).then(function(response) {
-            if (response.ok) {
-                console.log('Recording started.');
-                $('#btn_start_record').prop('disabled', true);
-                $('#btn_stop_record').prop('disabled', false);
-                // $('#btn_download').prop('disabled', true);
-            } else {
-                console.error('Failed to start recording.');
-            }
-        }).catch(function(error) {
-            console.error('Error:', error);
-        });
+  function waitIceComplete(peer) {
+    if (peer.iceGatheringState === "complete") return Promise.resolve();
+    return new Promise(function (resolve) {
+      function check() {
+        if (peer.iceGatheringState === "complete") {
+          peer.removeEventListener("icegatheringstatechange", check);
+          resolve();
+        }
+      }
+      peer.addEventListener("icegatheringstatechange", check);
+    });
+  }
+
+  async function start() {
+    if (pc) return;
+    var config = { sdpSemantics: "unified-plan", bundlePolicy: "max-bundle", iceCandidatePoolSize: 2 };
+    config.iceServers = await fetchIceServers();
+
+    pc = new RTCPeerConnection(config);
+    remoteStream = new MediaStream();
+    var videoEl = document.getElementById("video");
+    if (videoEl) videoEl.srcObject = remoteStream;
+    var audioEl = document.getElementById("audio");
+    if (audioEl) audioEl.srcObject = remoteStream;
+
+    pc.addEventListener("track", function (evt) {
+      remoteStream.addTrack(evt.track);
     });
 
-    $('#btn_stop_record').click(function() {
-        // 结束录制
-        console.log('Отключитьping recording...');
-        fetch('/record', {
-            body: JSON.stringify({
-                    type: 'end_record',
-                }),
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-            method: 'POST'
-        }).then(function(response) {
-            if (response.ok) {
-                console.log('Recording stopped.');
-                $('#btn_start_record').prop('disabled', false);
-                $('#btn_stop_record').prop('disabled', true);
-                // $('#btn_download').prop('disabled', false);
-            } else {
-                console.error('Failed to stop recording.');
-            }
-        }).catch(function(error) {
-            console.error('Error:', error);
-        });
+    pc.addTransceiver("video", { direction: "recvonly" });
+    pc.addTransceiver("audio", { direction: "recvonly" });
+
+    var offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await waitIceComplete(pc);
+
+    var res = await fetch("/offer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sdp: pc.localDescription.sdp,
+        type: pc.localDescription.type,
+        quality: "auto",
+        profile: "head"
+      })
     });
 
-    // $('#btn_download').click(function() {
-    //     // 下载视频文件
-    //     console.log('Downloading video...');
-    //     fetch('/record_lasted.mp4', {
-    //         method: 'GET'
-    //     }).then(function(response) {
-    //         if (response.ok) {
-    //             return response.blob();
-    //         } else {
-    //             throw new Error('Failed to download the video.');
-    //         }
-    //     }).then(function(blob) {
-    //         // 创建一个 Blob 对象
-    //         const url = window.URL.createObjectURL(blob);
-    //         // 创建一个隐藏的可下载链接
-    //         const a = document.createElement('a');
-    //         a.style.display = 'none';
-    //         a.href = url;
-    //         a.download = 'record_lasted.mp4';
-    //         document.body.appendChild(a);
-    //         // 触发下载
-    //         a.click();
-    //         // 清理
-    //         window.URL.revokeObjectURL(url);
-    //         document.body.removeChild(a);
-    //         console.log('Video downloaded successfully.');
-    //     }).catch(function(error) {
-    //         console.error('Error:', error);
-    //     });
-    // });
+    var text = await res.text();
+    if (!res.ok) throw new Error(text || ("HTTP " + res.status));
+    var answer = JSON.parse(text);
+    document.getElementById("sessionid").value = answer.sessionid || 0;
+    await pc.setRemoteDescription(answer);
 
-	});
+    document.getElementById("start").style.display = "none";
+    document.getElementById("stop").style.display = "inline-block";
+    log("Подключено. Можно писать.");
+  }
 
-  
+  async function stop() {
+    if (!pc) return;
+    var sid = parseInt(document.getElementById("sessionid").value || "0", 10);
+    if (sid) {
+      fetch("/end_session", {
+        body: JSON.stringify({ sessionid: sid }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST"
+      }).catch(function () {});
+    }
+    pc.close();
+    pc = null;
+    document.getElementById("stop").style.display = "none";
+    document.getElementById("start").style.display = "inline-block";
+    log("Отключено.");
+  }
+
+  function sendMessage(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    var messageEl = document.getElementById("message");
+    var message = (messageEl.value || "").trim();
+    if (!message) return;
+    var sid = parseInt(document.getElementById("sessionid").value || "0", 10);
+    if (!sid) {
+      alert("Сначала нажмите Подключиться");
+      return;
+    }
+    fetch("/human", {
+      body: JSON.stringify({
+        text: message,
+        type: "chat",
+        interrupt: true,
+        sessionid: sid
+      }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST"
+    }).then(function (res) {
+      if (!res.ok) return res.text().then(function (t) { throw new Error(t); });
+      return res.json();
+    }).then(function (data) {
+      if (data && data.reply) log("Ответ: " + data.reply);
+    }).catch(function (err) {
+      log("Ошибка: " + err);
+    });
+    messageEl.value = "";
+  }
+
+  document.getElementById("start").addEventListener("click", function (e) { if (e) e.preventDefault(); start(); });
+  document.getElementById("stop").addEventListener("click", function (e) { if (e) e.preventDefault(); stop(); });
+  document.getElementById("echo-form").addEventListener("submit", sendMessage);
+  document.getElementById("send").addEventListener("click", sendMessage);
+})();
 </script>
+</body>
 </html>
