@@ -1,0 +1,61 @@
+STREAMING.txt
+=============
+LiveTalking: low-latency WebRTC audio+video streaming architecture
+
+1) High-level flow
+- Browser (premium.html / widget / webrtcchat) establishes WebRTC to /offer.
+- Server (app.py) creates an aiortc RTCPeerConnection and attaches audio+video
+  tracks from HumanPlayer (webrtc.py).
+- Speech pipeline:
+  user voice -> /speech (audio upload) -> Yandex STT -> LLM (OpenAI-compatible,
+  e.g. DeepSeek via base_url) -> streamed text chunks -> Yandex TTS (streaming
+  lpcm 16k) -> audio frames -> NerfASR -> NeRF render -> video frames.
+- Audio and video are produced in the same render loop and pushed to WebRTC
+  queues, so lip sync stays tight.
+
+2) Transport and latency
+- WebRTC over UDP with ICE (STUN/TURN from /ice). Low-latency by design.
+- H264 NVENC is enabled when available (CBR, bf=0, g=60, tune=ll, baseline).
+  Fallback is libx264 with zerolatency.
+- Quality profiles (emergency..high) control max bitrate, fps, and scale, and
+  audio bitrate. They can be switched at runtime (/webrtc_quality).
+
+3) A/V sync and frame timing
+- PlayerStreamTrack uses a shared _start_time for audio and video.
+- Audio packets are 20 ms (AUDIO_PTIME=0.020 at 16kHz).
+- Video packets are 40 ms (VIDEO_PTIME=0.040, i.e., 25 fps target).
+- PTS/time_base are computed from the same clock, with scheduled sleeps to hit
+  targets. This keeps audio and video aligned.
+- If audio is missing, silence frames are generated; if video is missing, the
+  last frame is repeated.
+
+4) Drift prevention and backlog control
+- Audio queue capped (MAX_AUDIO_QUEUE=120). If it grows, old frames are dropped.
+- Video queue capped (MAX_VIDEO_QUEUE=8). Late-frame logic (MAX_VIDEO_LATE=0.12s)
+  drops frames and advances the frame index to catch up.
+- Result: constant fps output without long latency buildup.
+
+5) Client-side jitter handling
+- Client can set playoutDelayHint for both audio and video.
+- Auto mode uses inbound-rtp stats (jitter, loss, RTT) to adjust playout delay
+  and to trigger auto quality changes.
+
+6) Speech pipeline details
+- premium.html uses VAD to detect end of speech. When silence threshold is met,
+  it sends /speech (webm/opus) with local chat history (last 20 messages).
+- Server converts to 16k mono PCM (ffmpeg) and calls Yandex STT.
+- LLM response is streamed; text is chunked by punctuation so TTS can start
+  speaking early (low time-to-first-audio).
+- Yandex TTS streams lpcm; audio is split into 20 ms frames and sent into the
+  avatar pipeline and WebRTC audio track.
+
+7) NeRF rendering and lip sync
+- NerfASR runs at 50 fps (two 20 ms steps per 40 ms video frame).
+- test_step() uses the current audio features to render the next frame, and
+  pulls audio from the same ASR output queue for WebRTC. This keeps lip sync
+  stable even under jitter.
+
+8) Session management and resilience
+- Each session has its own BaseReal/NeRFReal instance.
+- On disconnect, the server flushes TTS/ASR and releases the session.
+- Chat history is trimmed to 20 items to keep context bounded.

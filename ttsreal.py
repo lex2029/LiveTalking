@@ -286,6 +286,95 @@ class OpenAITTS(BaseTTS):
         logger.info(f'-------openai tts time:{time.time()-t:.4f}s')
 
 ###########################################################################################
+class YandexTTS(BaseTTS):
+    def _auth_headers(self):
+        api_key = getattr(self.parent, "yandex_api_key", "") or os.getenv("YANDEX_API_KEY", "")
+        iam_token = getattr(self.parent, "yandex_iam_token", "") or os.getenv("YANDEX_IAM_TOKEN", "")
+        if api_key:
+            return {"Authorization": f"Api-Key {api_key}"}, "api_key"
+        if iam_token:
+            return {"Authorization": f"Bearer {iam_token}"}, "iam"
+        return None, None
+
+    def txt_to_audio(self, msg):
+        text, textevent = msg
+        headers, auth_type = self._auth_headers()
+        if not headers:
+            logger.error("Yandex TTS missing credentials.")
+            return
+
+        folder_id = getattr(self.parent, "yandex_folder_id", "") or os.getenv("YANDEX_FOLDER_ID", "")
+        voice = getattr(self.parent, "yandex_tts_voice", "") or os.getenv("YANDEX_TTS_VOICE", "alena")
+        lang = getattr(self.parent, "yandex_tts_lang", "") or os.getenv("YANDEX_TTS_LANG", "ru-RU")
+        response_format = getattr(self.parent, "yandex_tts_format", "") or os.getenv("YANDEX_TTS_FORMAT", "lpcm")
+        sample_rate = getattr(self.parent, "yandex_tts_sample_rate", None)
+        if sample_rate is None:
+            try:
+                sample_rate = int(os.getenv("YANDEX_TTS_SAMPLE_RATE", "16000"))
+            except Exception:
+                sample_rate = 16000
+        speed = getattr(self.parent, "yandex_tts_speed", None)
+        if speed is None:
+            try:
+                env_speed = os.getenv("YANDEX_TTS_SPEED", "")
+                speed = float(env_speed) if env_speed else None
+            except Exception:
+                speed = None
+
+        if response_format != "lpcm":
+            logger.error("Yandex TTS supports only lpcm output in this integration.")
+            return
+        if sample_rate != self.sample_rate:
+            logger.info("Yandex TTS sample rate %s unsupported; using %s.", sample_rate, self.sample_rate)
+            sample_rate = self.sample_rate
+
+        data = {
+            "text": text,
+            "lang": lang,
+            "voice": voice,
+            "format": response_format,
+            "sampleRateHertz": str(sample_rate),
+        }
+        if speed is not None:
+            data["speed"] = str(speed)
+        if folder_id and auth_type == "iam":
+            data["folderId"] = folder_id
+
+        t = time.time()
+        try:
+            resp = requests.post(
+                "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize",
+                headers=headers,
+                data=data,
+                stream=True,
+                timeout=30,
+            )
+            if resp.status_code != 200:
+                logger.error("Yandex TTS error %s: %s", resp.status_code, resp.text[:200])
+                return
+
+            bytes_per_chunk = self.chunk * 2
+            buf = bytearray()
+            first = True
+            for chunk in resp.iter_content(chunk_size=4096):
+                if not chunk or self.state != State.RUNNING:
+                    continue
+                buf.extend(chunk)
+                while len(buf) >= bytes_per_chunk and self.state == State.RUNNING:
+                    frame_bytes = buf[:bytes_per_chunk]
+                    del buf[:bytes_per_chunk]
+                    frame = np.frombuffer(frame_bytes, dtype=np.int16).astype(np.float32) / 32767.0
+                    eventpoint = None
+                    if first:
+                        eventpoint = {"status": "start", "text": text, "msgevent": textevent}
+                        first = False
+                    self.parent.put_audio_frame(frame, eventpoint)
+            eventpoint = {"status": "end", "text": text, "msgevent": textevent}
+            self.parent.put_audio_frame(np.zeros(self.chunk, np.float32), eventpoint)
+        except Exception:
+            logger.exception("yandex tts")
+        logger.info(f"-------yandex tts time:{time.time()-t:.4f}s")
+
 class FishTTS(BaseTTS):
     def txt_to_audio(self,msg): 
         text,textevent = msg

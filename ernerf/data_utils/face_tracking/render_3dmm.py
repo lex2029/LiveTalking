@@ -136,6 +136,8 @@ class Render_3DMM(nn.Module):
             image_size=(self.img_h, self.img_w),
             blur_radius=np.log(1.0 / 1e-4 - 1.0) * sigma / 18.0,
             faces_per_pixel=2,
+            bin_size=64,
+            max_faces_per_bin=200000,
             perspective_correct=False,
         )
         blend_params = blending.BlendParams(background_color=[0, 0, 0])

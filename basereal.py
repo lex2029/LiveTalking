@@ -35,7 +35,7 @@ import soundfile as sf
 import av
 from fractions import Fraction
 
-from ttsreal import EdgeTTS,SovitsTTS,XTTS,CosyVoiceTTS,FishTTS,TencentTTS,OpenAITTS
+from ttsreal import EdgeTTS,SovitsTTS,XTTS,CosyVoiceTTS,FishTTS,TencentTTS,OpenAITTS,YandexTTS
 from logger import logger
 
 from tqdm import tqdm
@@ -69,6 +69,21 @@ class BaseReal:
             self.openai_tts_sample_rate = int(os.getenv("OPENAI_TTS_SAMPLE_RATE", opt.openai_tts_sample_rate if hasattr(opt, "openai_tts_sample_rate") else 24000))
         except Exception:
             self.openai_tts_sample_rate = 24000
+        self.yandex_api_key = os.getenv("YANDEX_API_KEY", opt.yandex_api_key if hasattr(opt, "yandex_api_key") else "")
+        self.yandex_iam_token = os.getenv("YANDEX_IAM_TOKEN", opt.yandex_iam_token if hasattr(opt, "yandex_iam_token") else "")
+        self.yandex_folder_id = os.getenv("YANDEX_FOLDER_ID", opt.yandex_folder_id if hasattr(opt, "yandex_folder_id") else "")
+        self.yandex_tts_voice = os.getenv("YANDEX_TTS_VOICE", opt.yandex_tts_voice if hasattr(opt, "yandex_tts_voice") else "alena")
+        self.yandex_tts_lang = os.getenv("YANDEX_TTS_LANG", opt.yandex_tts_lang if hasattr(opt, "yandex_tts_lang") else "ru-RU")
+        self.yandex_tts_format = os.getenv("YANDEX_TTS_FORMAT", opt.yandex_tts_format if hasattr(opt, "yandex_tts_format") else "lpcm")
+        try:
+            self.yandex_tts_sample_rate = int(os.getenv("YANDEX_TTS_SAMPLE_RATE", opt.yandex_tts_sample_rate if hasattr(opt, "yandex_tts_sample_rate") else 16000))
+        except Exception:
+            self.yandex_tts_sample_rate = 16000
+        try:
+            self.yandex_tts_speed = float(os.getenv("YANDEX_TTS_SPEED", opt.yandex_tts_speed if hasattr(opt, "yandex_tts_speed") else ""))
+        except Exception:
+            self.yandex_tts_speed = None
+        self.yandex_stt_lang = os.getenv("YANDEX_STT_LANG", opt.yandex_stt_lang if hasattr(opt, "yandex_stt_lang") else "ru-RU")
         if opt.tts == "edgetts":
             self.tts = EdgeTTS(opt,self)
         elif opt.tts == "gpt-sovits":
@@ -81,6 +96,8 @@ class BaseReal:
             self.tts = FishTTS(opt,self)
         elif opt.tts == "tencent":
             self.tts = TencentTTS(opt,self)
+        elif opt.tts == "yandex":
+            self.tts = YandexTTS(opt,self)
         elif opt.tts == "openai":
             self.tts = OpenAITTS(opt,self)
         

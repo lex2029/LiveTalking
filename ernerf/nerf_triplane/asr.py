@@ -225,11 +225,12 @@ class ASR:
         if self.opt.asr_save_feats:
             self.all_feats.append(feats)
 
-        # record the feats efficiently.. (no concat, constant memory)
-        start = self.feat_buffer_idx * self.context_size
-        end = start + feats.shape[0]
-        self.feat_queue[start:end] = feats
-        self.feat_buffer_idx = (self.feat_buffer_idx + 1) % self.feat_buffer_size
+        if self.mode == 'live':
+            # record the feats efficiently.. (no concat, constant memory)
+            start = self.feat_buffer_idx * self.context_size
+            end = start + feats.shape[0]
+            self.feat_queue[start:end] = feats
+            self.feat_buffer_idx = (self.feat_buffer_idx + 1) % self.feat_buffer_size
 
         # very naive, just concat the text output.
         if text != '':

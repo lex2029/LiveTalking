@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Avatar — Voice Screen</title>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap");
+
+    :root {
+      --bg: #0b0f14;
+      --accent: #4af2a1;
+      --accent-2: #3aa0ff;
+      --text: #f4f6fb;
+      --muted: #8d97a7;
+      --glass: rgba(255, 255, 255, 0.08);
+      --shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+      --radius-xl: 28px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Space Grotesk", sans-serif;
+      color: var(--text);
+      background: radial-gradient(1200px 600px at 10% 10%, rgba(74, 242, 161, 0.18), transparent 60%),
+                  radial-gradient(900px 500px at 90% 0%, rgba(58, 160, 255, 0.18), transparent 55%),
+                  linear-gradient(180deg, #0b0f14 0%, #0b0f14 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 24px;
+    }
+
+    .stage {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .video-shell {
+      background: radial-gradient(400px 300px at 20% 20%, rgba(58, 160, 255, 0.2), transparent 60%),
+                  linear-gradient(160deg, rgba(16, 22, 30, 0.9), rgba(9, 12, 18, 0.95));
+      border-radius: var(--radius-xl);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: var(--shadow);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+      width: min(90vw, 900px);
+      aspect-ratio: 1 / 1;
+    }
+
+    @media (orientation: landscape) {
+      .video-shell {
+        max-height: 60vh;
+      }
+    }
+
+    @media (orientation: portrait) {
+      .video-shell {
+        max-width: 90vw;
+      }
+    }
+
+    .video-shell video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .video-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+      text-align: center;
+      padding: 24px;
+      background: rgba(0, 0, 0, 0.2);
+      backdrop-filter: blur(6px);
+    }
+
+    .video-overlay.hidden { display: none; }
+
+    .avatar-pulse {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      position: relative;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .avatar-pulse::after {
+      content: "";
+      position: absolute;
+      inset: -18px;
+      border-radius: 50%;
+      border: 1px solid rgba(74, 242, 161, 0.4);
+      animation: pulse 2.4s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.7); opacity: 0.8; }
+      100% { transform: scale(1.4); opacity: 0; }
+    }
+
+    .hud {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(19, 24, 32, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(12px);
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .hud.top { top: 24px; }
+    .hud.bottom { bottom: 24px; }
+
+    .btn {
+      border: none;
+      padding: 10px 18px;
+      border-radius: 999px;
+      font-family: inherit;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .btn:active { transform: scale(0.98); }
+
+    .btn-call {
+      background: linear-gradient(135deg, var(--accent-2), #79c1ff);
+      color: #051423;
+      box-shadow: 0 10px 30px rgba(58, 160, 255, 0.35);
+    }
+
+    .btn-hangup {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .meter {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+    }
+
+    .meter span {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .meter.listening span {
+      background: var(--accent);
+      box-shadow: 0 0 12px rgba(74, 242, 161, 0.8);
+    }
+  </style>
+</head>
+<body>
+  <div class="stage">
+    <div class="video-shell" id="videoShell">
+      <div class="video-overlay" id="videoOverlay">
+        <div class="avatar-pulse"></div>
+        <div>Нажмите «Позвонить», чтобы увидеть аватар</div>
+      </div>
+      <video id="video" autoplay playsinline></video>
+      <audio id="audio" autoplay></audio>
+    </div>
+
+    <div class="hud top" id="status">Готов к звонку</div>
+    <div class="hud bottom">
+      <button class="btn btn-call" id="call">Позвонить</button>
+      <button class="btn btn-hangup" id="hangup" style="display:none">Завершить</button>
+      <div class="meter" id="meter"><span></span>Авто‑слушание</div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  const callBtn = document.getElementById("call");
+  const hangupBtn = document.getElementById("hangup");
+  const statusEl = document.getElementById("status");
+  const meterEl = document.getElementById("meter");
+  const videoEl = document.getElementById("video");
+  const audioEl = document.getElementById("audio");
+  const videoOverlay = document.getElementById("videoOverlay");
+
+  let pc = null;
+  let sessionId = 0;
+  let greeted = false;
+  let micStream = null;
+  let analyser = null;
+  let audioCtx = null;
+  let vadLoop = null;
+  let recorder = null;
+  let recordedChunks = [];
+  let recording = false;
+  let lastVoice = 0;
+  let speechStarted = false;
+  let interruptSent = false;
+  const history = [];
+
+  const VAD = {
+    threshold: 0.02,
+    silenceMs: 800,
+    minSpeechMs: 200,
+    maxRecordMs: 15000
+  };
+
+  function setStatus(text) {
+    statusEl.textContent = text;
+  }
+
+  function setMeter(active) {
+    meterEl.classList.toggle("listening", active);
+  }
+
+  function trimHistory() {
+    let userCount = 0;
+    let assistantCount = 0;
+    const trimmed = [];
+    for (let i = history.length - 1; i >= 0; i--) {
+      const item = history[i];
+      if (item.role === "user") {
+        if (userCount >= 10) continue;
+        userCount++;
+      } else if (item.role === "assistant") {
+        if (assistantCount >= 10) continue;
+        assistantCount++;
+      }
+      trimmed.push(item);
+      if (trimmed.length >= 20) break;
+    }
+    trimmed.reverse();
+    history.splice(0, history.length, ...trimmed);
+  }
+
+  function pushHistory(role, content) {
+    history.push({ role, content });
+    trimHistory();
+  }
+
+  async function fetchIceServers() {
+    try {
+      const res = await fetch("/ice");
+      const data = await res.json();
+      if (data && Array.isArray(data.iceServers) && data.iceServers.length) {
+        return data.iceServers;
+      }
+    } catch (e) {}
+    return [{ urls: ["stun:stun.l.google.com:19302"] }];
+  }
+
+  function waitIceComplete(peer) {
+    if (peer.iceGatheringState === "complete") return Promise.resolve();
+    return new Promise((resolve) => {
+      function check() {
+        if (peer.iceGatheringState === "complete") {
+          peer.removeEventListener("icegatheringstatechange", check);
+          resolve();
+        }
+      }
+      peer.addEventListener("icegatheringstatechange", check);
+    });
+  }
+
+  async function startCall() {
+    if (pc) return;
+    setStatus("Подключаем...");
+    const config = { sdpSemantics: "unified-plan", bundlePolicy: "max-bundle", iceCandidatePoolSize: 2 };
+    config.iceServers = await fetchIceServers();
+    pc = new RTCPeerConnection(config);
+
+    const remoteStream = new MediaStream();
+    videoEl.srcObject = remoteStream;
+    audioEl.srcObject = remoteStream;
+
+    pc.addEventListener("track", (evt) => {
+      remoteStream.addTrack(evt.track);
+    });
+
+    pc.addTransceiver("video", { direction: "recvonly" });
+    pc.addTransceiver("audio", { direction: "recvonly" });
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await waitIceComplete(pc);
+
+    const res = await fetch("/offer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sdp: pc.localDescription.sdp,
+        type: pc.localDescription.type,
+        quality: "high",
+        profile: "head"
+      })
+    });
+
+    const text = await res.text();
+    if (!res.ok) throw new Error(text || ("HTTP " + res.status));
+    const answer = JSON.parse(text);
+    sessionId = answer.sessionid || 0;
+    await pc.setRemoteDescription(answer);
+
+    callBtn.style.display = "none";
+    hangupBtn.style.display = "inline-block";
+    videoOverlay.classList.add("hidden");
+    setStatus("На связи");
+    await startListening();
+  }
+
+  async function stopCall() {
+    if (!pc) return;
+    const sid = sessionId;
+    sessionId = 0;
+    greeted = false;
+    if (sid) {
+      fetch("/end_session", {
+        body: JSON.stringify({ sessionid: sid }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST"
+      }).catch(() => {});
+    }
+    pc.close();
+    pc = null;
+    callBtn.style.display = "inline-block";
+    hangupBtn.style.display = "none";
+    videoOverlay.classList.remove("hidden");
+    setStatus("Готов к звонку");
+    stopListening();
+  }
+
+  function greetOnce() {
+    if (greeted || !sessionId) return;
+    greeted = true;
+    const greeting = "Привет, ну вот и я! О чем хочешь поговорить?";
+    pushHistory("assistant", greeting);
+    fetch("/human", {
+      body: JSON.stringify({
+        text: greeting,
+        type: "echo",
+        interrupt: false,
+        sessionid: sessionId,
+        history: history
+      }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST"
+    }).catch(() => {});
+  }
+
+  async function ensureMic() {
+    if (micStream) return micStream;
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    return micStream;
+  }
+
+  function startRecorder() {
+    if (!micStream) return;
+    recordedChunks = [];
+    const options = {};
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+      options.mimeType = "audio/webm;codecs=opus";
+    } else if (window.MediaRecorder && MediaRecorder.isTypeSupported("audio/webm")) {
+      options.mimeType = "audio/webm";
+    }
+    recorder = new MediaRecorder(micStream, options);
+    recorder.ondataavailable = (evt) => {
+      if (evt.data && evt.data.size > 0) recordedChunks.push(evt.data);
+    };
+    recorder.onstop = sendRecording;
+    recorder.start();
+    recording = true;
+    speechStarted = true;
+  }
+
+  function stopRecorder() {
+    if (recorder && recorder.state === "recording") {
+      recorder.stop();
+    }
+    recording = false;
+    speechStarted = false;
+    interruptSent = false;
+  }
+
+  async function sendRecording() {
+    if (!recordedChunks.length || !sessionId) return;
+    const mimeType = recorder && recorder.mimeType ? recorder.mimeType : "audio/webm";
+    const blob = new Blob(recordedChunks, { type: mimeType });
+    const fd = new FormData();
+    fd.append("sessionid", sessionId);
+    fd.append("interrupt", "1");
+    fd.append("history", JSON.stringify(history));
+    fd.append("file", blob, "speech.webm");
+    try {
+      const res = await fetch("/speech", { method: "POST", body: fd });
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || ("HTTP " + res.status));
+      const data = JSON.parse(text);
+      if (data && data.text) {
+        pushHistory("user", data.text);
+      }
+      if (data && data.reply) {
+        pushHistory("assistant", data.reply);
+      }
+    } catch (err) {
+      setStatus("Ошибка: " + err);
+    }
+  }
+
+  function updateVad() {
+    if (!analyser || !audioCtx || !sessionId) return;
+    const data = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      const v = (data[i] - 128) / 128;
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / data.length);
+    const now = performance.now();
+
+    if (rms > VAD.threshold) {
+      lastVoice = now;
+      if (!recording) {
+        if (!interruptSent && sessionId) {
+          interruptSent = true;
+          fetch("/human", {
+            body: JSON.stringify({
+              text: "",
+              type: "echo",
+              interrupt: true,
+              sessionid: sessionId,
+              history: history
+            }),
+            headers: { "Content-Type": "application/json" },
+            method: "POST"
+          }).catch(() => {});
+        }
+        startRecorder();
+      }
+    }
+
+    if (recording) {
+      if (speechStarted && now - lastVoice > VAD.silenceMs) {
+        stopRecorder();
+      }
+      if (now - lastVoice > VAD.maxRecordMs) {
+        stopRecorder();
+      }
+    }
+
+    setMeter(recording || rms > VAD.threshold * 0.5);
+    vadLoop = requestAnimationFrame(updateVad);
+  }
+
+  async function startListening() {
+    try {
+      await ensureMic();
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioCtx.createMediaStreamSource(micStream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+      }
+      if (!vadLoop) {
+        lastVoice = performance.now();
+        vadLoop = requestAnimationFrame(updateVad);
+      }
+    } catch (e) {
+      setStatus("Нет доступа к микрофону");
+    }
+  }
+
+  function stopListening() {
+    if (vadLoop) {
+      cancelAnimationFrame(vadLoop);
+      vadLoop = null;
+    }
+    recording = false;
+    speechStarted = false;
+    interruptSent = false;
+    setMeter(false);
+  }
+
+  callBtn.addEventListener("click", async () => {
+    try {
+      await startCall();
+    } catch (err) {
+      setStatus("Ошибка подключения");
+    }
+  });
+
+  hangupBtn.addEventListener("click", () => {
+    stopCall();
+  });
+
+  videoEl.addEventListener("playing", () => {
+    greetOnce();
+  });
+})();
+</script>
+</body>
+</html>

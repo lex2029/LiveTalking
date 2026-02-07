@@ -13,6 +13,7 @@
     .option { margin-bottom: 8px; }
     .row { margin-bottom: 10px; }
     #reply { margin-top: 8px; color: #444; white-space: pre-wrap; }
+    #rec-status { margin-left: 8px; color: #666; }
   </style>
 </head>
 <body>
@@ -39,6 +40,12 @@
   <button type="submit" id="send">Отправить</button>
 </form>
 
+<div class="row">
+  <button id="rec">Записать</button>
+  <button id="rec-stop" style="display:none">Стоп</button>
+  <span id="rec-status"></span>
+</div>
+
 <div id="reply"></div>
 
 <div id="media">
@@ -50,10 +57,34 @@
 (function () {
   var pc = null;
   var remoteStream = null;
+  var recorder = null;
+  var recordedChunks = [];
+  var micStream = null;
 
   function log(msg) {
     var replyEl = document.getElementById("reply");
     if (replyEl) replyEl.textContent = msg;
+  }
+
+  function setRecState(active) {
+    var recBtn = document.getElementById("rec");
+    var stopBtn = document.getElementById("rec-stop");
+    var statusEl = document.getElementById("rec-status");
+    if (active) {
+      if (recBtn) recBtn.style.display = "none";
+      if (stopBtn) stopBtn.style.display = "inline-block";
+      if (statusEl) statusEl.textContent = "Запись...";
+    } else {
+      if (recBtn) recBtn.style.display = "inline-block";
+      if (stopBtn) stopBtn.style.display = "none";
+      if (statusEl) statusEl.textContent = "";
+    }
+  }
+
+  async function ensureMic() {
+    if (micStream) return micStream;
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    return micStream;
   }
 
   async function fetchIceServers() {
@@ -172,10 +203,72 @@
     messageEl.value = "";
   }
 
+  async function startRecording() {
+    var sid = parseInt(document.getElementById("sessionid").value || "0", 10);
+    if (!sid) {
+      alert("Сначала нажмите Подключиться");
+      return;
+    }
+    try {
+      await ensureMic();
+    } catch (e) {
+      log("Нет доступа к микрофону: " + e);
+      return;
+    }
+    recordedChunks = [];
+    var options = {};
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+      options.mimeType = "audio/webm;codecs=opus";
+    } else if (window.MediaRecorder && MediaRecorder.isTypeSupported("audio/webm")) {
+      options.mimeType = "audio/webm";
+    }
+    recorder = new MediaRecorder(micStream, options);
+    recorder.ondataavailable = function (evt) {
+      if (evt.data && evt.data.size > 0) recordedChunks.push(evt.data);
+    };
+    recorder.onstop = sendRecording;
+    recorder.start();
+    setRecState(true);
+    log("Запись...");
+  }
+
+  function stopRecording() {
+    if (recorder && recorder.state === "recording") {
+      recorder.stop();
+    }
+    setRecState(false);
+  }
+
+  async function sendRecording() {
+    var sid = parseInt(document.getElementById("sessionid").value || "0", 10);
+    if (!sid) return;
+    if (!recordedChunks.length) {
+      log("Нет аудио");
+      return;
+    }
+    var mimeType = (recorder && recorder.mimeType) ? recorder.mimeType : "audio/webm";
+    var blob = new Blob(recordedChunks, { type: mimeType });
+    var fd = new FormData();
+    fd.append("sessionid", sid);
+    fd.append("file", blob, "speech.webm");
+    try {
+      var res = await fetch("/speech", { method: "POST", body: fd });
+      var text = await res.text();
+      if (!res.ok) throw new Error(text || ("HTTP " + res.status));
+      var data = JSON.parse(text);
+      if (data && data.text) log("Вы сказали: " + data.text);
+      if (data && data.reply) log("Ответ: " + data.reply);
+    } catch (err) {
+      log("Ошибка: " + err);
+    }
+  }
+
   document.getElementById("start").addEventListener("click", function (e) { if (e) e.preventDefault(); start(); });
   document.getElementById("stop").addEventListener("click", function (e) { if (e) e.preventDefault(); stop(); });
   document.getElementById("echo-form").addEventListener("submit", sendMessage);
   document.getElementById("send").addEventListener("click", sendMessage);
+  document.getElementById("rec").addEventListener("click", function (e) { if (e) e.preventDefault(); startRecording(); });
+  document.getElementById("rec-stop").addEventListener("click", function (e) { if (e) e.preventDefault(); stopRecording(); });
 })();
 </script>
 </body>

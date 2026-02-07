@@ -20,6 +20,8 @@ from flask import Flask, render_template,send_from_directory,request, jsonify
 from flask_sockets import Sockets
 import base64
 import json
+import subprocess
+import requests
 #import gevent
 #from gevent import pywsgi
 #from geventwebsocket.handler import WebSocketHandler
@@ -153,6 +155,15 @@ _default_config = {
     "openai_tts_format": "",
     "openai_tts_speed": None,
     "openai_tts_sample_rate": None,
+    "yandex_api_key": "",
+    "yandex_iam_token": "",
+    "yandex_folder_id": "",
+    "yandex_tts_voice": "",
+    "yandex_tts_lang": "",
+    "yandex_tts_format": "",
+    "yandex_tts_speed": None,
+    "yandex_tts_sample_rate": None,
+    "yandex_stt_lang": "",
     "assemblyai_key": "",
 }
 
@@ -349,6 +360,15 @@ def _load_secrets(path: str):
     openai_tts_speed = data.get("openai_tts_speed", data.get("OPENAI_TTS_SPEED"))
     openai_tts_sample_rate = data.get("openai_tts_sample_rate", data.get("OPENAI_TTS_SAMPLE_RATE"))
     assemblyai_key = _pick("assemblyai_key", "assemblyai_api_key", "ASSEMBLYAI_API_KEY")
+    yandex_api_key = _pick("yandex_api_key", "YANDEX_API_KEY")
+    yandex_iam_token = _pick("yandex_iam_token", "YANDEX_IAM_TOKEN")
+    yandex_folder_id = _pick("yandex_folder_id", "YANDEX_FOLDER_ID")
+    yandex_tts_voice = _pick("yandex_tts_voice", "YANDEX_TTS_VOICE")
+    yandex_tts_lang = _pick("yandex_tts_lang", "YANDEX_TTS_LANG")
+    yandex_tts_format = _pick("yandex_tts_format", "YANDEX_TTS_FORMAT")
+    yandex_tts_speed = data.get("yandex_tts_speed", data.get("YANDEX_TTS_SPEED"))
+    yandex_tts_sample_rate = data.get("yandex_tts_sample_rate", data.get("YANDEX_TTS_SAMPLE_RATE"))
+    yandex_stt_lang = _pick("yandex_stt_lang", "YANDEX_STT_LANG")
 
     if openai_key:
         _default_config["openai_key"] = openai_key
@@ -372,9 +392,165 @@ def _load_secrets(path: str):
             _default_config["openai_tts_sample_rate"] = int(openai_tts_sample_rate)
         except Exception:
             pass
+    if yandex_api_key:
+        _default_config["yandex_api_key"] = yandex_api_key
+    if yandex_iam_token:
+        _default_config["yandex_iam_token"] = yandex_iam_token
+    if yandex_folder_id:
+        _default_config["yandex_folder_id"] = yandex_folder_id
+    if yandex_tts_voice:
+        _default_config["yandex_tts_voice"] = yandex_tts_voice
+    if yandex_tts_lang:
+        _default_config["yandex_tts_lang"] = yandex_tts_lang
+    if yandex_tts_format:
+        _default_config["yandex_tts_format"] = yandex_tts_format
+    if yandex_tts_speed is not None:
+        try:
+            _default_config["yandex_tts_speed"] = float(yandex_tts_speed)
+        except Exception:
+            pass
+    if yandex_tts_sample_rate is not None:
+        try:
+            _default_config["yandex_tts_sample_rate"] = int(yandex_tts_sample_rate)
+        except Exception:
+            pass
+    if yandex_stt_lang:
+        _default_config["yandex_stt_lang"] = yandex_stt_lang
     if assemblyai_key:
         _default_config["assemblyai_key"] = assemblyai_key
         
+
+
+
+def _resolve_yandex_auth(nerfreal: Optional[BaseReal]):
+    api_key = (
+        (getattr(nerfreal, "yandex_api_key", "") if nerfreal else "")
+        or _default_config.get("yandex_api_key")
+        or os.getenv("YANDEX_API_KEY", "")
+    ).strip()
+    iam_token = (
+        (getattr(nerfreal, "yandex_iam_token", "") if nerfreal else "")
+        or _default_config.get("yandex_iam_token")
+        or os.getenv("YANDEX_IAM_TOKEN", "")
+    ).strip()
+    if api_key:
+        return {"Authorization": f"Api-Key {api_key}"}, "api_key"
+    if iam_token:
+        return {"Authorization": f"Bearer {iam_token}"}, "iam"
+    return None, None
+
+
+def _yandex_folder_id(nerfreal: Optional[BaseReal]) -> str:
+    return (
+        (getattr(nerfreal, "yandex_folder_id", "") if nerfreal else "")
+        or _default_config.get("yandex_folder_id")
+        or os.getenv("YANDEX_FOLDER_ID", "")
+    ).strip()
+
+
+def _yandex_stt_lang(nerfreal: Optional[BaseReal]) -> str:
+    return (
+        (getattr(nerfreal, "yandex_stt_lang", "") if nerfreal else "")
+        or _default_config.get("yandex_stt_lang")
+        or os.getenv("YANDEX_STT_LANG", "")
+        or "ru-RU"
+    ).strip()
+
+
+def _ffmpeg_to_pcm(audio_bytes: bytes) -> bytes:
+    if not audio_bytes:
+        return b""
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-f",
+        "s16le",
+        "pipe:1",
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=audio_bytes,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except FileNotFoundError:
+        logger.info("ffmpeg not found for STT")
+        return b""
+    if proc.returncode != 0:
+        logger.info("ffmpeg convert failed: %s", proc.stderr.decode("utf-8", "ignore")[:200])
+        return b""
+    return proc.stdout
+
+
+def _yandex_stt(audio_bytes: bytes, nerfreal: Optional[BaseReal]) -> str:
+    headers, auth_type = _resolve_yandex_auth(nerfreal)
+    if not headers:
+        raise RuntimeError("Yandex STT missing credentials")
+    pcm = _ffmpeg_to_pcm(audio_bytes)
+    if not pcm:
+        raise RuntimeError("Audio convert failed")
+    params = {
+        "lang": _yandex_stt_lang(nerfreal),
+        "format": "lpcm",
+        "sampleRateHertz": "16000",
+    }
+    folder_id = _yandex_folder_id(nerfreal)
+    if auth_type == "iam" and folder_id:
+        params["folderId"] = folder_id
+    resp = requests.post(
+        "https://stt.api.cloud.yandex.net/speech/v1/stt:recognize",
+        params=params,
+        headers=headers,
+        data=pcm,
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        logger.info("Yandex STT error %s: %s", resp.status_code, resp.text[:200])
+        raise RuntimeError("Yandex STT error")
+    try:
+        payload = resp.json()
+    except Exception:
+        raise RuntimeError("Yandex STT invalid response")
+    result = (payload.get("result") or "").strip()
+    if not result:
+        err = payload.get("error_message") or payload.get("error_code")
+        if err:
+            logger.info("Yandex STT error detail: %s", err)
+    return result
+
+
+
+def _apply_client_history(nerfreal: Optional[BaseReal], history) -> None:
+    if nerfreal is None or not isinstance(history, list):
+        return
+    cleaned = []
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role not in ("user", "assistant"):
+            continue
+        if not isinstance(content, str):
+            continue
+        content = content.strip()
+        if not content:
+            continue
+        cleaned.append({"role": role, "content": content})
+    if len(cleaned) > 20:
+        cleaned = cleaned[-20:]
+    if cleaned:
+        nerfreal.chat_history = cleaned
 
 #####webrtc###############################
 pcs = set()
@@ -420,6 +596,24 @@ def build_nerfreal(sessionid:int)->BaseReal:
         nerfreal.openai_tts_speed = _default_config["openai_tts_speed"]
     if _default_config.get("openai_tts_sample_rate") is not None:
         nerfreal.openai_tts_sample_rate = _default_config["openai_tts_sample_rate"]
+    if _default_config.get("yandex_api_key"):
+        nerfreal.yandex_api_key = _default_config["yandex_api_key"]
+    if _default_config.get("yandex_iam_token"):
+        nerfreal.yandex_iam_token = _default_config["yandex_iam_token"]
+    if _default_config.get("yandex_folder_id"):
+        nerfreal.yandex_folder_id = _default_config["yandex_folder_id"]
+    if _default_config.get("yandex_tts_voice"):
+        nerfreal.yandex_tts_voice = _default_config["yandex_tts_voice"]
+    if _default_config.get("yandex_tts_lang"):
+        nerfreal.yandex_tts_lang = _default_config["yandex_tts_lang"]
+    if _default_config.get("yandex_tts_format"):
+        nerfreal.yandex_tts_format = _default_config["yandex_tts_format"]
+    if _default_config.get("yandex_tts_speed") is not None:
+        nerfreal.yandex_tts_speed = _default_config["yandex_tts_speed"]
+    if _default_config.get("yandex_tts_sample_rate") is not None:
+        nerfreal.yandex_tts_sample_rate = _default_config["yandex_tts_sample_rate"]
+    if _default_config.get("yandex_stt_lang"):
+        nerfreal.yandex_stt_lang = _default_config["yandex_stt_lang"]
     return nerfreal
 
 def _daily_domain() -> str:
@@ -796,6 +990,8 @@ async def human(request):
     params = await request.json()
 
     sessionid = params.get('sessionid',0)
+    history = params.get("history")
+    _apply_client_history(nerfreals.get(sessionid), history)
     if params.get('interrupt'):
         nerfreals[sessionid].flush_talk()
 
@@ -844,6 +1040,80 @@ async def humanaudio(request):
                 {"code": -1, "msg":"err","data": ""+e.args[0]+""}
             ),
         )
+
+
+
+async def speech(request):
+    try:
+        form = await request.post()
+        sessionid = int(form.get("sessionid", 0))
+        nerfreal = nerfreals.get(sessionid)
+        if not nerfreal:
+            return web.Response(
+                status=400,
+                content_type="application/json",
+                text=json.dumps({"code": -1, "msg": "invalid session"}),
+            )
+        interrupt = form.get("interrupt")
+        if interrupt:
+            nerfreal.flush_talk()
+        history_raw = form.get("history")
+        if history_raw:
+            try:
+                history = json.loads(history_raw)
+            except Exception:
+                history = None
+            _apply_client_history(nerfreal, history)
+        fileobj = form.get("file")
+        if fileobj is None:
+            return web.Response(
+                status=400,
+                content_type="application/json",
+                text=json.dumps({"code": -1, "msg": "missing audio"}),
+            )
+        filebytes = fileobj.file.read()
+        if not filebytes:
+            return web.Response(
+                status=400,
+                content_type="application/json",
+                text=json.dumps({"code": -1, "msg": "empty audio"}),
+            )
+    except Exception as e:
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": "err", "data": "" + e.args[0] + ""}),
+        )
+
+    loop = asyncio.get_event_loop()
+    try:
+        text_out = await loop.run_in_executor(None, _yandex_stt, filebytes, nerfreal)
+    except Exception as e:
+        logger.info("STT error: %s", e)
+        return web.Response(
+            status=500,
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": "STT error"}),
+        )
+    if not text_out:
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": "Empty STT result"}),
+        )
+
+    try:
+        reply = await loop.run_in_executor(None, llm_response, text_out, nerfreal)
+    except Exception as e:
+        logger.info("LLM error, no echo: %s", e)
+        return web.Response(
+            status=500,
+            content_type="application/json",
+            text=json.dumps({"code": -1, "msg": "LLM error"}),
+        )
+
+    return web.Response(
+        content_type="application/json",
+        text=json.dumps({"code": 0, "text": text_out, "reply": reply if isinstance(reply, str) else ""}),
+    )
 
 async def set_audiotype(request):
     params = await request.json()
@@ -920,6 +1190,62 @@ async def config(request):
                 nerfreal.openai_tts_sample_rate = value
         except Exception:
             pass
+    if 'yandex_api_key' in params:
+        value = (params.get('yandex_api_key') or "").strip()
+        _default_config["yandex_api_key"] = value
+        if nerfreal:
+            nerfreal.yandex_api_key = value
+    if 'yandex_iam_token' in params:
+        value = (params.get('yandex_iam_token') or "").strip()
+        _default_config["yandex_iam_token"] = value
+        if nerfreal:
+            nerfreal.yandex_iam_token = value
+    if 'yandex_folder_id' in params:
+        value = (params.get('yandex_folder_id') or "").strip()
+        _default_config["yandex_folder_id"] = value
+        if nerfreal:
+            nerfreal.yandex_folder_id = value
+    if 'yandex_tts_voice' in params:
+        value = (params.get('yandex_tts_voice') or "").strip()
+        if value:
+            _default_config["yandex_tts_voice"] = value
+            if nerfreal:
+                nerfreal.yandex_tts_voice = value
+    if 'yandex_tts_lang' in params:
+        value = (params.get('yandex_tts_lang') or "").strip()
+        if value:
+            _default_config["yandex_tts_lang"] = value
+            if nerfreal:
+                nerfreal.yandex_tts_lang = value
+    if 'yandex_tts_format' in params:
+        value = (params.get('yandex_tts_format') or "").strip()
+        if value:
+            _default_config["yandex_tts_format"] = value
+            if nerfreal:
+                nerfreal.yandex_tts_format = value
+    if 'yandex_tts_speed' in params:
+        try:
+            value = float(params.get('yandex_tts_speed'))
+            _default_config["yandex_tts_speed"] = value
+            if nerfreal:
+                nerfreal.yandex_tts_speed = value
+        except Exception:
+            pass
+    if 'yandex_tts_sample_rate' in params:
+        try:
+            value = int(params.get('yandex_tts_sample_rate'))
+            _default_config["yandex_tts_sample_rate"] = value
+            if nerfreal:
+                nerfreal.yandex_tts_sample_rate = value
+        except Exception:
+            pass
+    if 'yandex_stt_lang' in params:
+        value = (params.get('yandex_stt_lang') or "").strip()
+        if value:
+            _default_config["yandex_stt_lang"] = value
+            if nerfreal:
+                nerfreal.yandex_stt_lang = value
+
     if 'assemblyai_key' in params:
         value = (params.get('assemblyai_key') or "").strip()
         _default_config["assemblyai_key"] = value
@@ -1302,7 +1628,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--customvideo_config', type=str, default='')
 
-    parser.add_argument('--tts', type=str, default='edgetts') # edgetts | openai | gpt-sovits | xtts | cosyvoice | fishtts | tencent
+    parser.add_argument('--tts', type=str, default='edgetts') # edgetts | openai | yandex | gpt-sovits | xtts | cosyvoice | fishtts | tencent
     parser.add_argument('--REF_FILE', type=str, default=None)
     parser.add_argument('--REF_TEXT', type=str, default=None)
     parser.add_argument('--TTS_SERVER', type=str, default='http://127.0.0.1:9880') # http://localhost:9000
@@ -1385,6 +1711,7 @@ if __name__ == '__main__':
     appasync.router.add_get("/ice", ice)
     appasync.router.add_post("/human", human)
     appasync.router.add_post("/humanaudio", humanaudio)
+    appasync.router.add_post("/speech", speech)
     appasync.router.add_post("/set_audiotype", set_audiotype)
     appasync.router.add_post("/config", config)
     appasync.router.add_post("/assemblyai/token", assemblyai_token)
